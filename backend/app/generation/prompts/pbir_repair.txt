@@ -1,0 +1,15 @@
+The PBIR report you generated has validation errors.
+
+ERRORS:
+{error_list}
+
+CURRENT CONTENT (JSON):
+{current_content}
+
+Fix ONLY the listed errors. Common causes:
+- A visual references a measure or column that does not exist in the semantic model.
+- A required field is missing or has the wrong type per the PBIR schema.
+- Visual positions overlap or exceed the page bounds.
+
+Do not change anything that is not implicated by an error. Return the corrected content in
+the SAME JSON shape as before, nothing else.

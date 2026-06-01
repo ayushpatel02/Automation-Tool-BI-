@@ -1,0 +1,8 @@
+# Replace `:80` with your domain (e.g. reports.example.com) to get automatic HTTPS.
+:80 {
+	# API under /api/* -> backend; everything else -> Streamlit frontend.
+	handle_path /api/* {
+		reverse_proxy backend:8000
+	}
+	reverse_proxy frontend:8501
+}

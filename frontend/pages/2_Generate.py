@@ -1,0 +1,102 @@
+"""Generate page: choose a model, describe the report, watch progress, download .pbip."""
+
+from __future__ import annotations
+
+import streamlit as st
+
+from api_client import ApiClient, ApiError
+from components.auth import ensure_authenticated
+
+client: ApiClient = ensure_authenticated()
+st.title("2 · Generate a report")
+
+connector = st.session_state.get("connector")
+if not connector:
+    st.warning("Connect a data source first (see the **Connect** page).")
+    st.stop()
+
+st.caption(f"Data source: **{connector['name']}**")
+
+try:
+    models = client.list_models()
+except ApiError as exc:
+    st.error(str(exc))
+    st.stop()
+
+model_labels = {
+    f"{m['display_name']}{' (recommended)' if m.get('recommended') else ''}": m["id"]
+    for m in models
+}
+model_label = st.selectbox("AI model", list(model_labels.keys()))
+model_id = model_labels[model_label]
+
+project_name = st.text_input("Project name", value="GeneratedReport")
+request = st.text_area(
+    "Describe the report you want",
+    placeholder="e.g. A sales dashboard with total revenue, top 10 products by revenue, "
+    "and a monthly revenue trend line.",
+    height=120,
+)
+
+if st.button("Generate report", type="primary", disabled=not request.strip()):
+    body = {
+        "model_id": model_id,
+        "request": request,
+        "credential_id": connector.get("credential_id"),
+        "project_name": project_name,
+    }
+    try:
+        session = client.create_session(body)
+    except ApiError as exc:
+        st.error(str(exc))
+        st.stop()
+
+    st.session_state["session_id"] = session["id"]
+    st.subheader("Progress")
+    log = st.empty()
+    lines: list[str] = []
+    try:
+        for event in client.stream_events(session["id"]):
+            stage = event.get("stage", "?")
+            status = event.get("status", "")
+            line = f"`{stage}` → {status}"
+            if status == "retry":
+                line += f" (attempt {event.get('attempt')}: {', '.join(event.get('errors', [])[:3])})"
+            if event.get("message"):
+                line += f" — {event['message']}"
+            lines.append(line)
+            log.markdown("\n\n".join(lines))
+    except ApiError as exc:
+        st.error(str(exc))
+
+    final = client.get_session(session["id"])
+    if final["status"] == "complete":
+        st.success("Report generated and validated.")
+    elif final.get("has_download"):
+        st.warning(
+            "Report generated but did not fully pass validation — review issues below. "
+            "You can still download and open it."
+        )
+    else:
+        st.error(final.get("error_message") or "Generation failed.")
+
+    validation = client.get_validation(session["id"])
+    with st.expander("Validation details"):
+        st.json(validation)
+
+st.divider()
+session_id = st.session_state.get("session_id")
+if session_id:
+    final = client.get_session(session_id)
+    if final.get("has_download"):
+        try:
+            data = client.download_bytes(session_id)
+            st.download_button(
+                "⬇ Download .pbip project (zip)",
+                data=data,
+                file_name=f"{project_name}.zip",
+                mime="application/zip",
+            )
+            st.caption("Then continue to the **Refine** page to edit it with AI chat.")
+        except ApiError as exc:
+            st.error(str(exc))
