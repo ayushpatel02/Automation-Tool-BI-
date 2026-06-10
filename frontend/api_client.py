@@ -35,6 +35,18 @@ class ApiClient:
     def list_models(self) -> list[dict]:
         return self._get("/models")
 
+    # --- per-user API keys ---
+    def list_api_keys(self) -> list[dict]:
+        return self._get("/auth/api-keys")
+
+    def set_api_key(self, provider: str, api_key: str) -> list[dict]:
+        return self._request(
+            "PUT", "/auth/api-keys", {"provider": provider, "api_key": api_key}
+        )
+
+    def delete_api_key(self, provider: str) -> list[dict]:
+        return self._request("DELETE", f"/auth/api-keys/{provider}")
+
     # --- connectors ---
     def test_connector(self, config: dict) -> dict:
         return self._post("/connectors/test", config)
@@ -57,6 +69,15 @@ class ApiClient:
 
     def refine(self, session_id: str, message: str) -> dict:
         return self._post(f"/sessions/{session_id}/refine", {"message": message})
+
+    def get_history(self, session_id: str) -> dict:
+        return self._get(f"/sessions/{session_id}/history")
+
+    def revert(self, session_id: str) -> dict:
+        return self._request("POST", f"/sessions/{session_id}/revert")
+
+    def get_preview(self, session_id: str) -> dict:
+        return self._get(f"/sessions/{session_id}/preview")
 
     def download_bytes(self, session_id: str) -> bytes:
         resp = httpx.get(

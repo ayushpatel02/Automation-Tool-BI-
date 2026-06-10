@@ -6,6 +6,7 @@ import streamlit as st
 
 from api_client import ApiClient, ApiError
 from components.auth import ensure_authenticated
+from components.preview import render_preview
 
 client: ApiClient = ensure_authenticated()
 st.title("2 · Generate a report")
@@ -98,5 +99,15 @@ if session_id:
                 mime="application/zip",
             )
             st.caption("Then continue to the **Refine** page to edit it with AI chat.")
+        except ApiError as exc:
+            st.error(str(exc))
+
+        st.subheader("Layout preview")
+        st.caption(
+            "A wireframe of the generated pages and visuals (structure only — open the "
+            ".pbip in Power BI Desktop to see rendered visuals)."
+        )
+        try:
+            render_preview(client.get_preview(session_id))
         except ApiError as exc:
             st.error(str(exc))

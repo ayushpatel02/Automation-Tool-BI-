@@ -6,6 +6,7 @@ import streamlit as st
 
 from api_client import ApiClient, ApiError
 from components.auth import ensure_authenticated
+from components.preview import render_preview
 
 client: ApiClient = ensure_authenticated()
 st.title("3 · Refine the report")
@@ -61,13 +62,33 @@ if edit:
 
 final = client.get_session(session_id)
 if final.get("has_download"):
+    col_dl, col_undo = st.columns([2, 1])
     try:
         data = client.download_bytes(session_id)
-        st.download_button(
+        col_dl.download_button(
             "⬇ Download updated .pbip (zip)",
             data=data,
             file_name="GeneratedReport.zip",
             mime="application/zip",
         )
+    except ApiError as exc:
+        st.error(str(exc))
+
+    try:
+        versions = client.get_history(session_id).get("count", 0)
+    except ApiError:
+        versions = 0
+    if col_undo.button(f"↩ Undo last edit ({versions})", disabled=versions == 0):
+        try:
+            client.revert(session_id)
+            st.session_state["refine_log"] = []
+            st.toast("Reverted to the previous version.")
+            st.rerun()
+        except ApiError as exc:
+            st.error(str(exc))
+
+    st.subheader("Layout preview")
+    try:
+        render_preview(client.get_preview(session_id))
     except ApiError as exc:
         st.error(str(exc))

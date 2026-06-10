@@ -62,3 +62,35 @@ async def test_register_login_models_flow(client):
 @pytest.mark.asyncio
 async def test_models_requires_auth(client):
     assert (await client.get("/models")).status_code in (401, 403)
+
+
+@pytest.mark.asyncio
+async def test_api_key_set_list_delete(client):
+    await client.post(
+        "/auth/register", json={"email": "k@b.com", "password": "password123"}
+    )
+    token = (
+        await client.post(
+            "/auth/login", json={"email": "k@b.com", "password": "password123"}
+        )
+    ).json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # Nothing configured initially.
+    r = await client.get("/auth/api-keys", headers=headers)
+    assert r.status_code == 200
+    assert all(not s["configured"] for s in r.json())
+
+    # Set a key; provider reports configured and the secret is never echoed back.
+    r = await client.put(
+        "/auth/api-keys",
+        headers=headers,
+        json={"provider": "google", "api_key": "secret-value-123"},
+    )
+    assert r.status_code == 200
+    assert any(s["provider"] == "google" and s["configured"] for s in r.json())
+    assert "secret-value-123" not in r.text
+
+    # Delete clears it.
+    r = await client.delete("/auth/api-keys/google", headers=headers)
+    assert all(not s["configured"] for s in r.json() if s["provider"] == "google")

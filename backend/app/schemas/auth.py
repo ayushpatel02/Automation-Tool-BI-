@@ -28,3 +28,16 @@ class RefreshRequest(BaseModel):
 class UserResponse(BaseModel):
     id: str
     email: EmailStr
+
+
+class ApiKeyRequest(BaseModel):
+    provider: str
+    # Empty string clears the stored key for the provider.
+    api_key: str = ""
+
+
+class ApiKeyStatus(BaseModel):
+    """Whether a provider has a key on file — the key itself is never returned."""
+
+    provider: str
+    configured: bool

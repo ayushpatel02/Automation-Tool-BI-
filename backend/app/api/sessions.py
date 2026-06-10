@@ -21,11 +21,17 @@ from app.schemas.connector import ConnectorConfig, ConnectorType
 from app.schemas.generation import (
     GenerateRequest,
     RefineRequest,
+    ReportArtifacts,
     SessionResponse,
 )
 from app.services import events
-from app.services.generation_service import run_generation_task, run_refine_task
+from app.services.generation_service import (
+    revert_last,
+    run_generation_task,
+    run_refine_task,
+)
 from app.services.keys import resolve_api_key
+from app.services.preview import build_preview
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
@@ -155,6 +161,41 @@ async def refine(
         run_refine_task, session.id, api_key, body.message, "GeneratedReport"
     )
     return _to_response(session)
+
+
+@router.get("/{session_id}/history")
+async def history(
+    session_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    session = await _owned_session(session_id, user, db)
+    return {"count": len(session.artifact_history or [])}
+
+
+@router.post("/{session_id}/revert", response_model=SessionResponse)
+async def revert(
+    session_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> SessionResponse:
+    session = await _owned_session(session_id, user, db)
+    if not await revert_last(db, session):
+        raise HTTPException(status_code=400, detail="No previous version to revert to")
+    return _to_response(session)
+
+
+@router.get("/{session_id}/preview")
+async def preview(
+    session_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    session = await _owned_session(session_id, user, db)
+    if not session.current_artifacts:
+        raise HTTPException(status_code=404, detail="No report to preview yet")
+    report = ReportArtifacts(**session.current_artifacts["report"])
+    return build_preview(report)
 
 
 async def _owned_session(

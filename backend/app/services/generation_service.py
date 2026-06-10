@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 from sqlalchemy import select
 
@@ -18,6 +19,46 @@ from app.services import events
 logger = logging.getLogger(__name__)
 settings = get_settings()
 _MAX_HISTORY = 5
+
+
+def rebuild_pbip(
+    artifacts: dict, session_id: str, project_name: str = "GeneratedReport"
+) -> tuple[Path, dict]:
+    """Re-assemble a .pbip zip from a stored artifact snapshot and re-validate it.
+
+    Used by 'revert': a snapshot only holds the TMDL + PBIR content, so the downloadable
+    archive must be rebuilt from it. Returns (zip_path, validation_summary).
+    """
+    from app.assembler import assemble_pbip, zip_pbip
+    from app.validation import validate_report
+
+    model_art = SemanticModelArtifacts(**artifacts["semantic_model"])
+    report_art = ReportArtifacts(**artifacts["report"])
+    output_dir = settings.generated_dir / session_id
+    output_dir.mkdir(parents=True, exist_ok=True)
+    root = assemble_pbip(project_name, model_art, report_art, output_dir)
+    zip_path = zip_pbip(root, project_name)
+    rv = validate_report(report_art, model_art)
+    return zip_path, {"model": None, "report": rv.model_dump(), "attempts": {}}
+
+
+async def revert_last(
+    db, session: GenerationSession, project_name: str = "GeneratedReport"
+) -> bool:
+    """Restore the most recent artifact snapshot as the current report. Returns False if none."""
+    history = list(session.artifact_history or [])
+    if not history:
+        return False
+    snapshot = history.pop()
+    zip_path, validation = rebuild_pbip(snapshot, session.id, project_name)
+    session.current_artifacts = snapshot
+    session.artifact_history = history
+    session.download_path = str(zip_path)
+    session.last_validation = validation
+    session.status = "complete"
+    session.error_message = None
+    await db.commit()
+    return True
 
 
 async def _load_session(db, session_id: str) -> GenerationSession | None:

@@ -24,8 +24,9 @@ description of the report you want.
 
 **Workflow** (use the pages in the sidebar):
 1. **Connect** — point the tool at a data source (SQL database, warehouse, or a CSV/Excel file).
-2. **Generate** — choose an AI model, describe your report, and download the `.pbip`.
-3. **Refine** — iteratively edit the generated report through AI chat.
+2. **Generate** — choose an AI model, describe your report, preview the layout, and download the `.pbip`.
+3. **Refine** — iteratively edit the generated report through AI chat (with undo).
+4. **Settings** — optionally store your own AI provider API key (encrypted per user).
 
 > Open the downloaded project in **Power BI Desktop (March 2026 or later, PBIR preview
 > enabled)** to view and hand-edit it.
