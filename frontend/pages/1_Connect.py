@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import streamlit as st
 
 from api_client import ApiClient, ApiError
@@ -28,10 +30,31 @@ name = st.text_input("Friendly name", value=f"My {label}")
 config: dict = {"type": ctype, "name": name, "extra": {}}
 
 if ctype in ("csv", "excel"):
-    config["extra"]["file_path"] = st.text_input(
-        "Absolute file path (on the backend host)",
-        help="The file must be readable by the backend process.",
+    accepted = ["csv"] if ctype == "csv" else ["xlsx", "xls"]
+    uploaded = st.file_uploader(
+        "Upload a file",
+        type=accepted,
+        help="The file is stored on the backend and used as the source for this connector.",
     )
+    if uploaded is not None:
+        upload_key = f"uploaded:{uploaded.name}:{uploaded.size}"
+        if st.session_state.get("uploaded_key") != upload_key:
+            try:
+                meta = client.upload_file(
+                    uploaded.name, uploaded.getvalue(), uploaded.type or "application/octet-stream"
+                )
+                st.session_state["uploaded_key"] = upload_key
+                st.session_state["uploaded_meta"] = meta
+            except ApiError as exc:
+                st.error(str(exc))
+                st.session_state.pop("uploaded_meta", None)
+        meta = st.session_state.get("uploaded_meta")
+        if meta:
+            kb = meta["size_bytes"] / 1024
+            st.success(f"Uploaded **{meta['original_name']}** ({kb:.1f} KB)")
+            config["extra"]["file_path"] = meta["file_path"]
+            if not name.strip() or name == f"My {label}":
+                config["name"] = Path(meta["original_name"]).stem
 else:
     col1, col2 = st.columns(2)
     config["host"] = col1.text_input("Host", value="localhost")

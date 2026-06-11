@@ -57,6 +57,22 @@ class ApiClient:
     def list_connectors(self) -> list[dict]:
         return self._get("/connectors")
 
+    def upload_file(self, name: str, content: bytes, mime: str) -> dict:
+        """Upload a CSV/Excel file; returns {file_path, connector_type, ...}."""
+        try:
+            resp = httpx.post(
+                f"{BACKEND_URL}/connectors/upload",
+                headers=self._headers(),
+                files={"file": (name, content, mime)},
+                timeout=120,
+            )
+        except httpx.RequestError as exc:
+            raise ApiError(f"Cannot reach backend at {BACKEND_URL}: {exc}") from exc
+        if resp.status_code >= 400:
+            detail = resp.json().get("detail", resp.text) if resp.content else resp.text
+            raise ApiError(f"{resp.status_code}: {detail}")
+        return resp.json()
+
     # --- sessions ---
     def create_session(self, body: dict) -> dict:
         return self._post("/sessions", body)

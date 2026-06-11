@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+import uuid
+from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
+from app.config import get_settings
 from app.connectors import get_connector
 from app.db import get_db
 from app.models import StoredCredential, User
@@ -23,6 +26,9 @@ from app.security import decrypt_for_user, encrypt_for_user
 
 router = APIRouter(prefix="/connectors", tags=["connectors"])
 
+_ALLOWED_UPLOAD_EXTENSIONS = {".csv": "csv", ".xlsx": "excel", ".xls": "excel"}
+_MAX_UPLOAD_BYTES = 100 * 1024 * 1024  # 100 MB
+
 
 @router.post("/test", response_model=ConnectionTestResult)
 async def test_connector(
@@ -30,6 +36,47 @@ async def test_connector(
 ) -> ConnectionTestResult:
     connector = get_connector(config)
     return await connector.test_connection()
+
+
+@router.post("/upload")
+async def upload_file(
+    file: UploadFile = File(...),
+    user: User = Depends(get_current_user),
+) -> dict:
+    """Persist an uploaded CSV/Excel file in the user's upload dir and return its path."""
+    ext = Path(file.filename or "").suffix.lower()
+    if ext not in _ALLOWED_UPLOAD_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type '{ext or 'none'}'. Allowed: .csv, .xlsx, .xls",
+        )
+
+    settings = get_settings()
+    upload_dir = settings.generated_dir / "uploads" / user.id
+    upload_dir.mkdir(parents=True, exist_ok=True)
+
+    safe_name = f"{uuid.uuid4().hex}{ext}"
+    dest = upload_dir / safe_name
+
+    total = 0
+    with dest.open("wb") as out:
+        while chunk := await file.read(1024 * 1024):
+            total += len(chunk)
+            if total > _MAX_UPLOAD_BYTES:
+                out.close()
+                dest.unlink(missing_ok=True)
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"File exceeds {_MAX_UPLOAD_BYTES // (1024 * 1024)} MB limit",
+                )
+            out.write(chunk)
+
+    return {
+        "file_path": str(dest.resolve()),
+        "original_name": file.filename,
+        "size_bytes": total,
+        "connector_type": _ALLOWED_UPLOAD_EXTENSIONS[ext],
+    }
 
 
 @router.post("", response_model=StoredCredentialResponse, status_code=201)

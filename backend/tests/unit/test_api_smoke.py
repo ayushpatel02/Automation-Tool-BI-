@@ -94,3 +94,44 @@ async def test_api_key_set_list_delete(client):
     # Delete clears it.
     r = await client.delete("/auth/api-keys/google", headers=headers)
     assert all(not s["configured"] for s in r.json() if s["provider"] == "google")
+
+
+@pytest.mark.asyncio
+async def test_upload_file_writes_to_disk_and_rejects_bad_extension(client, tmp_path, monkeypatch):
+    from pathlib import Path
+
+    from app.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "generated_dir", tmp_path)
+
+    await client.post(
+        "/auth/register", json={"email": "u@b.com", "password": "password123"}
+    )
+    token = (
+        await client.post(
+            "/auth/login", json={"email": "u@b.com", "password": "password123"}
+        )
+    ).json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    csv_bytes = b"id,name\n1,Ada\n2,Linus\n"
+    r = await client.post(
+        "/connectors/upload",
+        headers=headers,
+        files={"file": ("people.csv", csv_bytes, "text/csv")},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["connector_type"] == "csv"
+    assert body["size_bytes"] == len(csv_bytes)
+    stored = Path(body["file_path"])
+    assert stored.exists()
+    assert stored.read_bytes() == csv_bytes
+
+    bad = await client.post(
+        "/connectors/upload",
+        headers=headers,
+        files={"file": ("malware.exe", b"00", "application/octet-stream")},
+    )
+    assert bad.status_code == 400
+    assert "Unsupported" in bad.json()["detail"]
