@@ -104,6 +104,13 @@ class ApiClient:
         resp.raise_for_status()
         return resp.content
 
+    # --- diagnostics ---
+    def diagnose_error(self, model_id: str, error_text: str, context: str | None = None) -> dict:
+        body: dict = {"model_id": model_id, "error_text": error_text}
+        if context:
+            body["context"] = context
+        return self._post("/diagnostics", body)
+
     def stream_events(self, session_id: str) -> Iterator[dict]:
         """Yield SSE progress events until the stream closes."""
         url = f"{BACKEND_URL}/sessions/{session_id}/events"

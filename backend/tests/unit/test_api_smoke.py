@@ -135,3 +135,46 @@ async def test_upload_file_writes_to_disk_and_rejects_bad_extension(client, tmp_
     )
     assert bad.status_code == 400
     assert "Unsupported" in bad.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_diagnose_error(client, monkeypatch):
+    from app.llm.router import LLMRouter
+
+    async def fake_complete(self, messages, **kwargs):
+        return "**Likely cause**: bad column name.\n\n**How to fix it**: rename it."
+
+    monkeypatch.setattr(LLMRouter, "complete", fake_complete)
+
+    await client.post(
+        "/auth/register", json={"email": "diag@b.com", "password": "password123"}
+    )
+    token = (
+        await client.post(
+            "/auth/login", json={"email": "diag@b.com", "password": "password123"}
+        )
+    ).json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    r = await client.post(
+        "/diagnostics",
+        headers=headers,
+        json={
+            "model_id": "gemini/gemini-2.5-flash",
+            "error_text": "Column 'Foo' not found in table 'Sales'",
+            "context": "Generating a sales report",
+        },
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["model_id"] == "gemini/gemini-2.5-flash"
+    assert "Likely cause" in body["answer"]
+
+
+@pytest.mark.asyncio
+async def test_diagnose_error_requires_auth(client):
+    r = await client.post(
+        "/diagnostics",
+        json={"model_id": "gemini/gemini-2.5-flash", "error_text": "boom"},
+    )
+    assert r.status_code in (401, 403)
