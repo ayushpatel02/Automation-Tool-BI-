@@ -11,12 +11,13 @@ from components.preview import render_preview
 client: ApiClient = ensure_authenticated()
 st.title("2 · Generate a report")
 
-connector = st.session_state.get("connector")
-if not connector:
+connectors = st.session_state.get("connectors") or []
+if not connectors:
     st.warning("Connect a data source first (see the **Connect** page).")
     st.stop()
 
-st.caption(f"Data source: **{connector['name']}**")
+source_names = ", ".join(f"**{c['name']}**" for c in connectors)
+st.caption(f"Data source{'s' if len(connectors) > 1 else ''}: {source_names}")
 
 try:
     models = client.list_models()
@@ -43,7 +44,7 @@ if st.button("Generate report", type="primary", disabled=not request.strip()):
     body = {
         "model_id": model_id,
         "request": request,
-        "credential_id": connector.get("credential_id"),
+        "credential_ids": [c["credential_id"] for c in connectors if c.get("credential_id")],
         "project_name": project_name,
     }
     try:
@@ -53,6 +54,7 @@ if st.button("Generate report", type="primary", disabled=not request.strip()):
         st.stop()
 
     st.session_state["session_id"] = session["id"]
+    st.session_state["project_name"] = project_name
     st.subheader("Progress")
     log = st.empty()
     lines: list[str] = []
@@ -109,5 +111,32 @@ if session_id:
         )
         try:
             render_preview(client.get_preview(session_id))
+        except ApiError as exc:
+            st.error(str(exc))
+
+st.divider()
+with st.expander("🛠 Stuck on an error? Paste it here for help"):
+    st.caption(
+        "Paste an error message — from this tool's validation output, Power BI Desktop, "
+        "DAX, TMDL, or Power Query (M) — and get an explanation plus a suggested fix. "
+        "Pick a smaller/cheaper model to save tokens, or a stronger one for tricky issues."
+    )
+    diag_model_label = st.selectbox(
+        "Model for diagnosis", list(model_labels.keys()), key="diag_model_label"
+    )
+    diag_model_id = model_labels[diag_model_label]
+    error_text = st.text_area(
+        "Error message",
+        height=120,
+        key="diag_error_text",
+        placeholder="Paste the error or validation message here...",
+    )
+    extra_context = st.text_input(
+        "Optional context (what were you trying to do?)", key="diag_context"
+    )
+    if st.button("Get help", disabled=not error_text.strip()):
+        try:
+            result = client.diagnose_error(diag_model_id, error_text, extra_context or None)
+            st.markdown(result["answer"])
         except ApiError as exc:
             st.error(str(exc))

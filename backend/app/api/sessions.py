@@ -16,8 +16,8 @@ from app.api.deps import get_current_user
 from app.connectors import get_connector
 from app.db import get_db
 from app.models import GenerationSession, User
-from app.profiler import profile_schema
-from app.schemas.connector import ConnectorConfig, ConnectorType
+from app.profiler import merge_profiles, profile_schema
+from app.schemas.connector import ConnectorConfig
 from app.schemas.generation import (
     GenerateRequest,
     RefineRequest,
@@ -42,6 +42,7 @@ def _to_response(s: GenerationSession) -> SessionResponse:
         status=s.status,
         model_id=s.model_id,
         original_request=s.original_request,
+        project_name=(s.current_artifacts or {}).get("project_name"),
         error_message=s.error_message,
         has_download=bool(s.download_path),
     )
@@ -54,26 +55,37 @@ async def create_session(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> SessionResponse:
-    # Resolve connector config (stored credential or inline).
-    if body.credential_id:
-        config = await load_connector_config(body.credential_id, user, db)
-    elif body.connector:
-        config = ConnectorConfig(**body.connector)
-    else:
-        raise HTTPException(status_code=400, detail="Provide credential_id or connector")
+    # Resolve one or more connector configs (stored credentials and/or inline configs).
+    configs: list[ConnectorConfig] = []
+    for cid in body.credential_ids or ([body.credential_id] if body.credential_id else []):
+        configs.append(await load_connector_config(cid, user, db))
+    for c in body.connectors or ([body.connector] if body.connector else []):
+        configs.append(ConnectorConfig(**c))
+
+    if not configs:
+        raise HTTPException(
+            status_code=400,
+            detail="Provide at least one data source (credential_id(s) or connector(s))",
+        )
 
     # Profile up-front so the request fails fast on a bad connection.
-    connector = get_connector(config)
-    test = await connector.test_connection()
-    if not test.ok:
-        raise HTTPException(status_code=400, detail=f"Connection failed: {test.message}")
-    profile = await profile_schema(connector)
+    profiles = []
+    for config in configs:
+        connector = get_connector(config)
+        test = await connector.test_connection()
+        if not test.ok:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Connection failed for '{config.name}': {test.message}",
+            )
+        profiles.append(await profile_schema(connector))
 
+    profile = merge_profiles(profiles)
     api_key = resolve_api_key(user, body.model_id)
 
     session = GenerationSession(
         user_id=user.id,
-        connector_id=body.credential_id,
+        connector_id=body.credential_ids[0] if body.credential_ids else body.credential_id,
         status="pending",
         model_id=body.model_id,
         original_request=body.request,
@@ -88,7 +100,6 @@ async def create_session(
         session.id,
         api_key,
         profile,
-        ConnectorType(config.type),
         body.project_name,
     )
     return _to_response(session)
@@ -157,8 +168,9 @@ async def refine(
     if not session.current_artifacts:
         raise HTTPException(status_code=400, detail="Nothing to refine yet")
     api_key = resolve_api_key(user, session.model_id)
+    project_name = session.current_artifacts.get("project_name", "GeneratedReport")
     background.add_task(
-        run_refine_task, session.id, api_key, body.message, "GeneratedReport"
+        run_refine_task, session.id, api_key, body.message, project_name
     )
     return _to_response(session)
 

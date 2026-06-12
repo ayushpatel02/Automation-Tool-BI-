@@ -65,6 +65,8 @@ class TableProfile(BaseModel):
     schema_name: str | None = None
     approx_row_count: int = 0
     columns: list[ColumnProfile] = Field(default_factory=list)
+    # Index into SchemaProfile.sources identifying which connector this table came from.
+    source_index: int = 0
 
 
 class RelationshipHint(BaseModel):
@@ -75,9 +77,23 @@ class RelationshipHint(BaseModel):
     source: Literal["foreign_key", "naming_convention"] = "foreign_key"
 
 
+class SourceInfo(BaseModel):
+    """Non-secret connector details, retained so generation/refinement can build
+    per-table Power Query (M) source hints for multi-source profiles."""
+
+    index: int = 0
+    name: str = "source"
+    type: ConnectorType
+    host: str | None = None
+    database: str | None = None
+    schema_name: str | None = None
+    extra: dict[str, str] = Field(default_factory=dict)
+
+
 class SchemaProfile(BaseModel):
     source_type: str
     database: str | None = None
+    sources: list[SourceInfo] = Field(default_factory=list)
     tables: list[TableProfile] = Field(default_factory=list)
     inferred_relationships: list[RelationshipHint] = Field(default_factory=list)
     profiled_at: datetime

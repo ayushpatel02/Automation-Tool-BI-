@@ -7,7 +7,7 @@ from pathlib import Path
 
 from app.generation.m_sources import m_source_hint
 from app.llm.router import LLMRouter
-from app.schemas.connector import ConnectorType, SchemaProfile
+from app.schemas.connector import ConnectorType, SchemaProfile, SourceInfo
 from app.schemas.generation import SemanticModelArtifacts
 
 _PROMPTS = Path(__file__).parent / "prompts"
@@ -17,15 +17,41 @@ def _load(name: str) -> str:
     return (_PROMPTS / name).read_text(encoding="utf-8")
 
 
+def _profile_sources(profile: SchemaProfile) -> list[SourceInfo]:
+    if profile.sources:
+        return profile.sources
+    return [SourceInfo(type=ConnectorType(profile.source_type), database=profile.database)]
+
+
 def _schema_context(profile: SchemaProfile) -> str:
     """Compact, model-friendly rendering of the schema profile."""
-    lines: list[str] = [f"Source type: {profile.source_type}"]
-    if profile.database:
-        lines.append(f"Database: {profile.database}")
+    sources = _profile_sources(profile)
+    multi = len(sources) > 1
+    lines: list[str] = []
+    if multi:
+        lines.append(
+            f"This report combines {len(sources)} data sources. Each table below is "
+            "tagged with the source it came from; use that source's M template for the "
+            "table's partition."
+        )
+        for s in sources:
+            db = f", database/file: {s.database}" if s.database else ""
+            lines.append(f'\nSOURCE [{s.index}] "{s.name}" ({s.type.value}{db})')
+            lines.append(f"  M source template: {m_source_hint(s.type, s)}")
+    else:
+        s = sources[0]
+        lines.append(f"Source type: {s.type.value}")
+        if s.database:
+            lines.append(f"Database: {s.database}")
+        lines.append(f"M source template: {m_source_hint(s.type, s)}")
     if profile.truncated:
         lines.append("(Note: schema was truncated to fit the context budget.)")
     for t in profile.tables:
-        lines.append(f"\nTABLE {t.name} (~{t.approx_row_count} rows)")
+        src_note = ""
+        if multi:
+            src = sources[t.source_index] if t.source_index < len(sources) else sources[0]
+            src_note = f' (source [{src.index}] "{src.name}")'
+        lines.append(f"\nTABLE {t.name} (~{t.approx_row_count} rows){src_note}")
         for c in t.columns:
             flags = []
             if c.is_primary_key:
@@ -44,14 +70,10 @@ def _schema_context(profile: SchemaProfile) -> str:
     return "\n".join(lines)
 
 
-def build_messages(
-    profile: SchemaProfile, user_request: str, connector_type: ConnectorType
-) -> list[dict]:
+def build_messages(profile: SchemaProfile, user_request: str) -> list[dict]:
     system = _load("tmdl_system.txt")
-    m_hint = m_source_hint(connector_type)
     user = (
         f"SCHEMA CONTEXT:\n{_schema_context(profile)}\n\n"
-        f"M SOURCE TEMPLATE for this connector ({connector_type.value}):\n{m_hint}\n\n"
         f"REPORT REQUEST:\n{user_request}\n\n"
         "Generate the TMDL semantic model now."
     )
@@ -84,9 +106,8 @@ async def generate_semantic_model(
     llm: LLMRouter,
     profile: SchemaProfile,
     user_request: str,
-    connector_type: ConnectorType,
 ) -> tuple[SemanticModelArtifacts, dict, list[dict]]:
     """Returns (artifacts, raw_json, base_messages) so the retry loop can build repairs."""
-    messages = build_messages(profile, user_request, connector_type)
+    messages = build_messages(profile, user_request)
     raw = await llm.complete_json(messages)
     return parse_artifacts(raw), raw, messages

@@ -10,7 +10,12 @@ from api_client import ApiClient, ApiError
 from components.auth import ensure_authenticated
 
 client: ApiClient = ensure_authenticated()
-st.title("1 · Connect a data source")
+st.title("1 · Connect data sources")
+st.caption(
+    "Connect one or more data sources. Every source added below will be combined into a "
+    "single schema for the next report you generate — handy for, e.g., a sales database "
+    "plus a marketing-spend CSV."
+)
 
 CONNECTOR_TYPES = {
     "PostgreSQL": "postgresql",
@@ -85,18 +90,39 @@ if col_test.button("Test connection"):
     except ApiError as exc:
         st.error(str(exc))
 
-if col_save.button("Use this source", type="primary"):
+if col_save.button("Add this source", type="primary"):
     try:
         result = client.test_connector(config)
         if not result["ok"]:
             st.error(f"Connection failed: {result['message']}")
         else:
             saved = client.save_connector(config)
-            st.session_state["connector"] = {**config, "credential_id": saved["id"]}
-            st.success("Connected. Head to the **Generate** page.")
+            sources = st.session_state.setdefault("connectors", [])
+            entry = {"name": config["name"], "type": ctype, "credential_id": saved["id"]}
+            # Re-adding a source with the same name+type updates it instead of duplicating.
+            sources[:] = [
+                s for s in sources if (s["name"], s["type"]) != (entry["name"], entry["type"])
+            ]
+            sources.append(entry)
+            st.success(
+                f"Added **{entry['name']}**. Connect another source above, or head to the "
+                "**Generate** page."
+            )
     except ApiError as exc:
         st.error(str(exc))
 
-if st.session_state.get("connector"):
-    st.divider()
-    st.caption(f"Active source: {st.session_state['connector']['name']}")
+st.divider()
+connectors = st.session_state.get("connectors", [])
+if connectors:
+    st.subheader("Active data sources")
+    for i, c in enumerate(connectors):
+        col_name, col_remove = st.columns([5, 1])
+        col_name.markdown(f"**{c['name']}** · {c['type']}")
+        if col_remove.button("Remove", key=f"remove_source_{i}"):
+            connectors.pop(i)
+            st.rerun()
+    st.caption(
+        f"{len(connectors)} source(s) will be combined for the next report you generate."
+    )
+else:
+    st.caption("No data sources connected yet — add one above.")

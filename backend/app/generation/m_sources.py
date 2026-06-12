@@ -7,7 +7,7 @@ template is injected into the TMDL generation prompt and the model fills table n
 
 from __future__ import annotations
 
-from app.schemas.connector import ConnectorType
+from app.schemas.connector import ConnectorType, SourceInfo
 
 # {server}/{database}/{schema}/{table} are filled by the model per table.
 _TEMPLATES: dict[ConnectorType, str] = {
@@ -54,9 +54,33 @@ _TEMPLATES: dict[ConnectorType, str] = {
 }
 
 
-def m_source_hint(connector_type: ConnectorType, config_extra: dict | None = None) -> str:
-    """Return the M source template string for the connector, as guidance for the prompt."""
+def m_source_hint(connector_type: ConnectorType, source: SourceInfo | None = None) -> str:
+    """Return the M source template for the connector, with known values filled in.
+
+    ``{table}`` (and ``{schema}``/``{host}``/etc. when not known for this source) are left
+    as literal placeholders for the model to fill in per table.
+    """
     template = _TEMPLATES.get(connector_type)
     if template is None:
         return "Use the appropriate Power Query connector function for this source."
-    return template
+
+    values = {
+        "host": "{host}",
+        "database": "{database}",
+        "schema": "{schema}",
+        "table": "{table}",
+        "warehouse": "{warehouse}",
+        "http_path": "{http_path}",
+        "file_path": "{file_path}",
+    }
+    if source is not None:
+        if source.host:
+            values["host"] = source.host
+        if source.database:
+            values["database"] = source.database
+        if source.schema_name:
+            values["schema"] = source.schema_name
+        for key in ("warehouse", "http_path", "file_path"):
+            if source.extra.get(key):
+                values[key] = source.extra[key]
+    return template.format(**values)

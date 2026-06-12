@@ -21,9 +21,11 @@ from app.connectors.base import DataConnector
 from app.connectors.files import FileConnector
 from app.schemas.connector import (
     ColumnProfile,
+    ConnectorType,
     NormalizedType,
     RelationshipHint,
     SchemaProfile,
+    SourceInfo,
     TableProfile,
 )
 
@@ -167,6 +169,7 @@ def _profile_sql(
     return SchemaProfile(
         source_type=connector.config.type.value,
         database=connector.config.database,
+        sources=[_source_info(connector.config)],
         tables=tables,
         inferred_relationships=_dedupe_relationships(relationships),
         profiled_at=datetime.now(UTC),
@@ -224,9 +227,76 @@ def _profile_file(
     return SchemaProfile(
         source_type=connector.config.type.value,
         database=path.name,
+        sources=[_source_info(connector.config, database=path.name)],
         tables=[table],
         profiled_at=datetime.now(UTC),
     )
+
+
+# --- Multi-source merge ------------------------------------------------------
+
+def _source_info(config, database: str | None = None) -> SourceInfo:
+    return SourceInfo(
+        index=0,
+        name=config.name,
+        type=config.type,
+        host=config.host,
+        database=database if database is not None else config.database,
+        schema_name=config.schema_name,
+        extra=dict(config.extra),
+    )
+
+
+def merge_profiles(profiles: list[SchemaProfile]) -> SchemaProfile:
+    """Combine schema profiles from multiple connectors into one multi-source profile.
+
+    Each input profile keeps its own ``sources[0]`` entry (re-indexed) and its tables are
+    tagged with the matching ``source_index``. Table names that collide across sources are
+    disambiguated with a ``{source_name}_`` prefix so relationships stay unambiguous.
+    """
+    if len(profiles) == 1:
+        return profiles[0]
+
+    sources: list[SourceInfo] = []
+    tables: list[TableProfile] = []
+    relationships: list[RelationshipHint] = []
+    seen_names: set[str] = set()
+
+    for i, p in enumerate(profiles):
+        src = p.sources[0] if p.sources else SourceInfo(type=ConnectorType(p.source_type), database=p.database)
+        slug = re.sub(r"[^A-Za-z0-9_]", "_", src.name) or f"source{i}"
+        src = src.model_copy(update={"index": i, "name": src.name or f"source{i}"})
+        sources.append(src)
+
+        rename: dict[str, str] = {}
+        for t in p.tables:
+            new_name = t.name
+            if new_name in seen_names:
+                new_name = f"{slug}_{t.name}"
+                rename[t.name] = new_name
+            seen_names.add(new_name)
+            tables.append(t.model_copy(update={"name": new_name, "source_index": i}))
+
+        for r in p.inferred_relationships:
+            relationships.append(
+                r.model_copy(
+                    update={
+                        "from_table": rename.get(r.from_table, r.from_table),
+                        "to_table": rename.get(r.to_table, r.to_table),
+                    }
+                )
+            )
+
+    merged = SchemaProfile(
+        source_type="multiple",
+        database=", ".join(s.database or s.name for s in sources),
+        sources=sources,
+        tables=tables,
+        inferred_relationships=_dedupe_relationships(relationships),
+        profiled_at=datetime.now(UTC),
+    )
+    _apply_token_budget(merged, settings.schema_token_budget)
+    return merged
 
 
 # --- Relationship inference + budgeting ------------------------------------

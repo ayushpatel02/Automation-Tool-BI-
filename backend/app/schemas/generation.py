@@ -49,8 +49,12 @@ class GenerateRequest(BaseModel):
     model_id: str
     request: str
     credential_id: str | None = None
+    # Multiple stored credentials, profiled and merged into one multi-source schema.
+    credential_ids: list[str] | None = None
     # Inline connector config (alternative to a stored credential, e.g. file uploads).
     connector: dict | None = None
+    # Multiple inline connector configs, merged alongside any credential_ids.
+    connectors: list[dict] | None = None
     project_name: str = "GeneratedReport"
 
 
@@ -63,5 +67,6 @@ class SessionResponse(BaseModel):
     status: str
     model_id: str
     original_request: str
+    project_name: str | None = None
     error_message: str | None = None
     has_download: bool = False

@@ -12,7 +12,7 @@ from app.db import SessionLocal
 from app.generation import run_generation
 from app.llm.router import LLMRouter
 from app.models import GenerationSession
-from app.schemas.connector import ConnectorType, SchemaProfile
+from app.schemas.connector import SchemaProfile
 from app.schemas.generation import ReportArtifacts, SemanticModelArtifacts
 from app.services import events
 
@@ -50,6 +50,7 @@ async def revert_last(
     if not history:
         return False
     snapshot = history.pop()
+    project_name = snapshot.get("project_name", project_name)
     zip_path, validation = rebuild_pbip(snapshot, session.id, project_name)
     session.current_artifacts = snapshot
     session.artifact_history = history
@@ -73,7 +74,6 @@ async def run_generation_task(
     session_id: str,
     api_key: str | None,
     profile: SchemaProfile,
-    connector_type: ConnectorType,
     project_name: str,
 ) -> None:
     cb = events.make_progress_cb(session_id)
@@ -93,12 +93,17 @@ async def run_generation_task(
                 llm=llm,
                 profile=profile,
                 user_request=session.original_request,
-                connector_type=connector_type,
                 project_name=project_name,
                 output_dir=output_dir,
                 progress=cb,
             )
             await _persist_outcome(db, session, outcome)
+            if session.current_artifacts is not None:
+                session.current_artifacts = {
+                    **session.current_artifacts,
+                    "project_name": project_name,
+                }
+                await db.commit()
         except Exception as exc:  # noqa: BLE001 — record failure, never crash the worker
             logger.exception("Generation failed for session %s", session_id)
             session.status = "failed"
@@ -131,6 +136,7 @@ async def run_refine_task(
             model_art = SemanticModelArtifacts(**artifacts["semantic_model"])
             report_art = ReportArtifacts(**artifacts["report"])
             profile = SchemaProfile(**session.schema_profile)
+            project_name = artifacts.get("project_name", project_name)
             llm = LLMRouter(session.model_id, api_key)
             output_dir = settings.generated_dir / session_id
             output_dir.mkdir(parents=True, exist_ok=True)
@@ -149,6 +155,11 @@ async def run_refine_task(
             )
             _snapshot(session)
             await _persist_outcome(db, session, outcome, status_done="complete")
+            if session.current_artifacts is not None:
+                session.current_artifacts = {
+                    **session.current_artifacts,
+                    "project_name": project_name,
+                }
             history.append(
                 {"role": "assistant", "content": "Applied edit and re-validated."}
             )

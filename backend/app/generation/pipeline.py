@@ -15,7 +15,7 @@ from app.config import get_settings
 from app.generation import report as report_gen
 from app.generation import semantic_model as model_gen
 from app.llm.router import LLMError, LLMRouter
-from app.schemas.connector import ConnectorType, SchemaProfile
+from app.schemas.connector import SchemaProfile
 from app.schemas.generation import (
     ReportArtifacts,
     SemanticModelArtifacts,
@@ -50,7 +50,6 @@ async def run_generation(
     llm: LLMRouter,
     profile: SchemaProfile,
     user_request: str,
-    connector_type: ConnectorType,
     project_name: str,
     output_dir: Path,
     progress: ProgressCb | None = None,
@@ -62,7 +61,7 @@ async def run_generation(
     await emit({"stage": "gen_model", "status": "start"})
     try:
         model_art, model_raw, base_msgs = await model_gen.generate_semantic_model(
-            llm, profile, user_request, connector_type
+            llm, profile, user_request
         )
     except LLMError as exc:
         outcome.error = f"Model generation failed: {exc}"

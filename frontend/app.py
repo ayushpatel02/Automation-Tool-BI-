@@ -12,7 +12,7 @@ client = ensure_authenticated()
 
 st.sidebar.success(f"Signed in as {st.session_state.get('email', 'user')}")
 if st.sidebar.button("Log out"):
-    for key in ("token", "email", "session_id", "connector"):
+    for key in ("token", "email", "session_id", "connectors", "project_name"):
         st.session_state.pop(key, None)
     st.rerun()
 
@@ -23,7 +23,8 @@ Welcome! This tool generates a valid Power BI project (`.pbip`) from a natural-l
 description of the report you want.
 
 **Workflow** (use the pages in the sidebar):
-1. **Connect** — point the tool at a data source (SQL database, warehouse, or a CSV/Excel file).
+1. **Connect** — point the tool at one or more data sources (SQL databases, warehouses, or
+   CSV/Excel files). Multiple sources are combined into a single schema.
 2. **Generate** — choose an AI model, describe your report, preview the layout, and download the `.pbip`.
 3. **Refine** — iteratively edit the generated report through AI chat (with undo).
 4. **Settings** — optionally store your own AI provider API key (encrypted per user).
@@ -33,7 +34,9 @@ description of the report you want.
 """
 )
 
-if st.session_state.get("connector"):
-    st.info(f"Active data source: **{st.session_state['connector'].get('name', 'unnamed')}**")
+connectors = st.session_state.get("connectors") or []
+if connectors:
+    names = ", ".join(f"**{c.get('name', 'unnamed')}**" for c in connectors)
+    st.info(f"Active data source{'s' if len(connectors) > 1 else ''}: {names}")
 else:
     st.warning("No data source connected yet — start on the **Connect** page.")

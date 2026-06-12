@@ -69,7 +69,7 @@ async def refine_report(
 
         await emit({"stage": "gen_model", "status": "start"})
         new_model, model_raw, base_msgs = await model_gen.generate_semantic_model(
-            llm, profile, composed, _infer_connector_type(profile)
+            llm, profile, composed
         )
         from app.validation import validate_semantic_model
 
@@ -127,12 +127,3 @@ async def _regen_model_local(llm: LLMRouter, messages: list[dict]):
 
     raw = await llm.complete_json(messages)
     return model_gen.parse_artifacts(raw), raw
-
-
-def _infer_connector_type(profile: SchemaProfile):
-    from app.schemas.connector import ConnectorType
-
-    try:
-        return ConnectorType(profile.source_type)
-    except ValueError:
-        return ConnectorType.POSTGRESQL
