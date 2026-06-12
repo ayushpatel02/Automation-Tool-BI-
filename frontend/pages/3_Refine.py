@@ -40,16 +40,21 @@ if edit:
     with st.chat_message("assistant"):
         log = st.empty()
         lines: list[str] = []
-        for event in client.stream_events(session_id):
-            stage = event.get("stage", "?")
-            status = event.get("status", "")
-            line = f"`{stage}` → {status}"
-            if status == "retry":
-                line += f" (attempt {event.get('attempt')})"
-            if event.get("scope"):
-                line += f" — scope: {', '.join(event['scope'])}"
-            lines.append(line)
-            log.markdown("\n\n".join(lines))
+        try:
+            for event in client.stream_events(session_id):
+                stage = event.get("stage", "?")
+                status = event.get("status", "")
+                line = f"`{stage}` → {status}"
+                if status == "retry":
+                    line += f" (attempt {event.get('attempt')})"
+                if event.get("scope"):
+                    line += f" — scope: {', '.join(event['scope'])}"
+                if event.get("message"):
+                    line += f" — {event['message']}"
+                lines.append(line)
+                log.markdown("\n\n".join(lines))
+        except ApiError as exc:
+            st.error(str(exc))
 
     final = client.get_session(session_id)
     msg = (
@@ -65,10 +70,13 @@ if final.get("has_download"):
     col_dl, col_undo = st.columns([2, 1])
     try:
         data = client.download_bytes(session_id)
+        project_name = (
+            final.get("project_name") or st.session_state.get("project_name") or "GeneratedReport"
+        )
         col_dl.download_button(
             "⬇ Download updated .pbip (zip)",
             data=data,
-            file_name="GeneratedReport.zip",
+            file_name=f"{project_name}.zip",
             mime="application/zip",
         )
     except ApiError as exc:
