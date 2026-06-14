@@ -28,7 +28,7 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 async def init_db() -> None:
     """Create tables on startup (dev convenience; production uses Alembic migrations)."""
     # Import models so they register with Base.metadata before create_all.
-    from app.models import credential, user  # noqa: F401
+    from app.models import credential, password_reset, user  # noqa: F401
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

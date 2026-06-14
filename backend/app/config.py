@@ -38,8 +38,20 @@ class Settings(BaseSettings):
     # Output
     generated_dir: Path = Path("./generated")
 
-    # CORS
+    # CORS / frontend. Also used as the base URL for password-reset links.
     frontend_origin: str = "http://localhost:8501"
+
+    # Email (SMTP). If smtp_host is unset, emails are logged instead of sent so the
+    # password-reset flow stays usable in local development without a mail server.
+    smtp_host: str | None = None
+    smtp_port: int = 587
+    smtp_username: str | None = None
+    smtp_password: str | None = None
+    smtp_use_tls: bool = True
+    smtp_from: str = "no-reply@pbigen.local"
+
+    # How long a password-reset link / code stays valid.
+    password_reset_expire_minutes: int = 30
 
     @property
     def default_provider_keys(self) -> dict[str, str | None]:

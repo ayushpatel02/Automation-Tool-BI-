@@ -40,7 +40,9 @@ def ensure_authenticated() -> ApiClient:
     st.title("AI Power BI Report Generator")
     st.caption("Sign in to generate Power BI reports from natural language.")
 
-    tab_login, tab_register = st.tabs(["Log in", "Register"])
+    tab_login, tab_register, tab_forgot = st.tabs(
+        ["Log in", "Register", "Forgot password"]
+    )
 
     with tab_login:
         with st.form("login_form"):
@@ -77,5 +79,29 @@ def ensure_authenticated() -> ApiClient:
                         st.success("Account created — log in on the other tab.")
                     except ApiError as exc:
                         st.error(_register_error_message(exc))
+
+    with tab_forgot:
+        st.caption(
+            "Enter your account email and we'll send a link to reset your password."
+        )
+        with st.form("forgot_form"):
+            email_f = st.text_input("Email", key="forgot_email")
+            if st.form_submit_button("Send reset link"):
+                if not email_f.strip():
+                    st.error("Please enter your email address.")
+                else:
+                    client = ApiClient()
+                    try:
+                        resp = client.forgot_password(email_f.strip())
+                        st.success(
+                            (resp or {}).get("message")
+                            or "If an account exists, a reset link has been sent."
+                        )
+                        st.caption(
+                            "Check your inbox for the link. Have a reset code already? "
+                            "Open the **Reset Password** page from the sidebar."
+                        )
+                    except ApiError as exc:
+                        st.error(f"Could not start password reset: {exc}")
 
     st.stop()

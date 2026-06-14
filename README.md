@@ -47,10 +47,18 @@ docker compose -f docker-compose.dev.yml up --build
 ## Status
 
 This repository is an in-progress build of the Phase 1 + 2 plan. The foundational
-vertical slice is in place: auth, connectors, profiler, LLM router, two-stage
-generation, assembler, validation + retry loop, REST API, and a Streamlit UI. Cloud
-warehouse connectors, the refinement loop, and full CI hardening are tracked in the
-milestone plan.
+vertical slice is in place: auth (with email-based password reset), connectors,
+profiler, LLM router, two-stage generation, assembler, validation + retry loop, REST
+API, and a Streamlit UI. Cloud warehouse connectors, the refinement loop, and full CI
+hardening are tracked in the milestone plan.
+
+### Password reset
+
+Users who forget their password can request a reset from the **Forgot password** tab on
+the login screen. The backend issues a single-use, time-limited token (stored only as a
+SHA-256 hash) and emails a link to the **Reset Password** page. Configure SMTP via the
+`SMTP_*` variables in `.env`; if `SMTP_HOST` is left blank, the reset link/code is logged
+to the backend console instead of sent — convenient for local development.
 
 ### Important format notes (verified June 2026)
 

@@ -11,9 +11,12 @@ from app.api.deps import get_current_user
 from app.db import get_db
 from app.models import User
 from app.schemas.auth import (
+    ForgotPasswordRequest,
     LoginRequest,
+    MessageResponse,
     RefreshRequest,
     RegisterRequest,
+    ResetPasswordRequest,
     TokenResponse,
     UserResponse,
 )
@@ -23,8 +26,13 @@ from app.security import (
     hash_password,
     verify_password,
 )
+from app.services.password_reset import request_password_reset, reset_password
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+_GENERIC_RESET_MESSAGE = (
+    "If an account exists for that email, a password reset link has been sent."
+)
 
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
@@ -67,6 +75,29 @@ async def refresh(body: RefreshRequest) -> TokenResponse:
         access_token=create_access_token(user_id),
         refresh_token=create_access_token(user_id, refresh=True),
     )
+
+
+@router.post("/forgot-password", response_model=MessageResponse)
+async def forgot_password(
+    body: ForgotPasswordRequest, db: AsyncSession = Depends(get_db)
+) -> MessageResponse:
+    # Always return the same response whether or not the email is registered, so the
+    # endpoint can't be used to discover which emails have accounts.
+    await request_password_reset(db, body.email)
+    return MessageResponse(message=_GENERIC_RESET_MESSAGE)
+
+
+@router.post("/reset-password", response_model=MessageResponse)
+async def reset_password_endpoint(
+    body: ResetPasswordRequest, db: AsyncSession = Depends(get_db)
+) -> MessageResponse:
+    ok = await reset_password(db, body.token, body.new_password)
+    if not ok:
+        raise HTTPException(
+            status_code=400,
+            detail="This reset link is invalid or has expired. Request a new one.",
+        )
+    return MessageResponse(message="Your password has been reset. You can now log in.")
 
 
 @router.get("/me", response_model=UserResponse)

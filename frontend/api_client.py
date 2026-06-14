@@ -31,6 +31,16 @@ class ApiClient:
         self.token = data["access_token"]
         return self.token
 
+    def forgot_password(self, email: str) -> dict:
+        return self._post("/auth/forgot-password", {"email": email}, auth=False)
+
+    def reset_password(self, token: str, new_password: str) -> dict:
+        return self._post(
+            "/auth/reset-password",
+            {"token": token, "new_password": new_password},
+            auth=False,
+        )
+
     # --- models ---
     def list_models(self) -> list[dict]:
         return self._get("/models")

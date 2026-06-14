@@ -8,6 +8,8 @@ secrets are only ever held in memory at connection time.
 from __future__ import annotations
 
 import base64
+import hashlib
+import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -62,6 +64,23 @@ def create_access_token(subject: str, *, refresh: bool = False) -> str:
 def decode_token(token: str) -> dict[str, Any]:
     """Decode and verify a JWT. Raises jwt.PyJWTError on failure."""
     return jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+
+
+# --- High-entropy single-use tokens (password reset, etc.) -----------------
+
+def generate_url_token(n_bytes: int = 32) -> str:
+    """Generate a cryptographically-random URL-safe token."""
+    return secrets.token_urlsafe(n_bytes)
+
+
+def hash_token(token: str) -> str:
+    """Hash a high-entropy token for at-rest storage (SHA-256 hex).
+
+    A fast hash is appropriate here (unlike passwords): the token already carries
+    full entropy, so it needs no slow KDF, and storing only the hash means a database
+    leak never exposes a usable token.
+    """
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
 # --- Per-user credential encryption ---------------------------------------
