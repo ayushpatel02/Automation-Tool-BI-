@@ -18,9 +18,15 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 
+def _from_address() -> str:
+    # Many providers (e.g. Gmail) require the From to match the authenticated user,
+    # so fall back to the SMTP username when no explicit From is configured.
+    return settings.smtp_from or settings.smtp_username or "no-reply@pbigen.local"
+
+
 def _build_message(to: str, subject: str, body: str) -> EmailMessage:
     msg = EmailMessage()
-    msg["From"] = settings.smtp_from
+    msg["From"] = _from_address()
     msg["To"] = to
     msg["Subject"] = subject
     msg.set_content(body)
@@ -28,13 +34,28 @@ def _build_message(to: str, subject: str, body: str) -> EmailMessage:
 
 
 def _send_smtp(msg: EmailMessage) -> None:
-    """Blocking SMTP send. Run via asyncio.to_thread from async callers."""
-    with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=30) as server:
-        if settings.smtp_use_tls:
-            server.starttls()
-        if settings.smtp_username and settings.smtp_password:
-            server.login(settings.smtp_username, settings.smtp_password)
-        server.send_message(msg)
+    """Blocking SMTP send. Run via asyncio.to_thread from async callers.
+
+    Supports both implicit-TLS (port 465, e.g. ``smtp.gmail.com:465``) and
+    STARTTLS (port 587) servers.
+    """
+    host, port = settings.smtp_host, settings.smtp_port
+    if port == 465:
+        with smtplib.SMTP_SSL(host, port, timeout=30) as server:
+            _authenticate_and_send(server, msg)
+    else:
+        with smtplib.SMTP(host, port, timeout=30) as server:
+            server.ehlo()
+            if settings.smtp_use_tls:
+                server.starttls()
+                server.ehlo()
+            _authenticate_and_send(server, msg)
+
+
+def _authenticate_and_send(server: smtplib.SMTP, msg: EmailMessage) -> None:
+    if settings.smtp_username and settings.smtp_password:
+        server.login(settings.smtp_username, settings.smtp_password)
+    server.send_message(msg)
 
 
 async def send_email(to: str, subject: str, body: str) -> None:

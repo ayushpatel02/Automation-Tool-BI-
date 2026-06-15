@@ -55,10 +55,14 @@ hardening are tracked in the milestone plan.
 ### Password reset
 
 Users who forget their password can request a reset from the **Forgot password** tab on
-the login screen. The backend issues a single-use, time-limited token (stored only as a
-SHA-256 hash) and emails a link to the **Reset Password** page. Configure SMTP via the
-`SMTP_*` variables in `.env`; if `SMTP_HOST` is left blank, the reset link/code is logged
-to the backend console instead of sent — convenient for local development.
+the login screen, or from the standalone **Reset Password** page (enter your email →
+once sent, the reset-code field appears). The backend issues a single-use, time-limited
+token (stored only as a SHA-256 hash) and emails a link/code.
+
+Configure SMTP via the `SMTP_*` variables in `.env` to send real mail — see
+`.env.example` for ready-to-use **Gmail** settings (host `smtp.gmail.com`, port 587 or
+465, using a Google **App Password**). If `SMTP_HOST` is left blank, the reset link/code
+is logged to the backend console instead of sent — convenient for local development.
 
 ### Important format notes (verified June 2026)
 

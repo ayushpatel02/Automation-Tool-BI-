@@ -166,3 +166,75 @@ async def test_send_email_without_smtp_logs_instead_of_raising(caplog):
         await send_email("someone@b.com", "Subject", "Body")
 
     assert any("SMTP not configured" in rec.message for rec in caplog.records)
+
+
+class _FakeSMTP:
+    """Records the SMTP conversation so tests can assert on it."""
+
+    def __init__(self, calls: list):
+        self.calls = calls
+
+    def __call__(self, host, port, timeout=None):
+        self.calls.append(("connect", host, port))
+        return self
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def ehlo(self):
+        self.calls.append(("ehlo",))
+
+    def starttls(self):
+        self.calls.append(("starttls",))
+
+    def login(self, username, password):
+        self.calls.append(("login", username, password))
+
+    def send_message(self, msg):
+        self.calls.append(("send", msg["To"], msg["From"]))
+
+
+def _configure_smtp(monkeypatch, *, port):
+    from app.services import email as email_mod
+
+    monkeypatch.setattr(email_mod.settings, "smtp_host", "smtp.gmail.com")
+    monkeypatch.setattr(email_mod.settings, "smtp_port", port)
+    monkeypatch.setattr(email_mod.settings, "smtp_use_tls", True)
+    monkeypatch.setattr(email_mod.settings, "smtp_username", "u@gmail.com")
+    monkeypatch.setattr(email_mod.settings, "smtp_password", "app-pw")
+    monkeypatch.setattr(email_mod.settings, "smtp_from", "")  # fall back to username
+    return email_mod
+
+
+@pytest.mark.asyncio
+async def test_send_email_starttls_path(monkeypatch):
+    calls: list = []
+    email_mod = _configure_smtp(monkeypatch, port=587)
+    monkeypatch.setattr(email_mod.smtplib, "SMTP", _FakeSMTP(calls))
+
+    await email_mod.send_email("to@x.com", "Subject", "Body")
+
+    kinds = [c[0] for c in calls]
+    assert ("connect", "smtp.gmail.com", 587) in calls
+    assert "starttls" in kinds
+    assert ("login", "u@gmail.com", "app-pw") in calls
+    # From falls back to the SMTP username when smtp_from is blank.
+    assert ("send", "to@x.com", "u@gmail.com") in calls
+
+
+@pytest.mark.asyncio
+async def test_send_email_ssl_path_on_465(monkeypatch):
+    calls: list = []
+    email_mod = _configure_smtp(monkeypatch, port=465)
+    monkeypatch.setattr(email_mod.smtplib, "SMTP_SSL", _FakeSMTP(calls))
+
+    await email_mod.send_email("to@x.com", "Subject", "Body")
+
+    kinds = [c[0] for c in calls]
+    assert ("connect", "smtp.gmail.com", 465) in calls
+    # Implicit TLS — no STARTTLS handshake on 465.
+    assert "starttls" not in kinds
+    assert ("login", "u@gmail.com", "app-pw") in calls
