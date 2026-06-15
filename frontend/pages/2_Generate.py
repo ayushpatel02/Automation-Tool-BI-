@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+
 import streamlit as st
 
 from api_client import ApiClient, ApiError
@@ -83,12 +85,9 @@ if st.button("Generate report", type="primary", disabled=not request.strip()):
     else:
         st.error(final.get("error_message") or "Generation failed.")
 
-    validation = client.get_validation(session["id"])
-    with st.expander("Validation details"):
-        st.json(validation)
-
 st.divider()
 session_id = st.session_state.get("session_id")
+validation_errors_text = ""
 if session_id:
     final = client.get_session(session_id)
     if final.get("has_download"):
@@ -114,29 +113,60 @@ if session_id:
         except ApiError as exc:
             st.error(str(exc))
 
+    try:
+        validation = client.get_validation(session_id)
+        with st.expander("Validation details"):
+            st.json(validation)
+        validation_errors_text = "\n".join(
+            f"- {e.get('file', '?')}"
+            + (f" ({e['path']})" if e.get("path") else "")
+            + f": {e.get('message', '')}"
+            for e in validation.get("errors") or []
+        )
+    except ApiError as exc:
+        st.error(str(exc))
+
 st.divider()
-with st.expander("🛠 Stuck on an error? Paste it here for help"):
+with st.expander(
+    "🛠 Stuck on an error? Paste it here for help",
+    expanded=bool(validation_errors_text),
+):
     st.caption(
         "Paste an error message — from this tool's validation output, Power BI Desktop, "
-        "DAX, TMDL, or Power Query (M) — and get an explanation plus a suggested fix. "
-        "Pick a smaller/cheaper model to save tokens, or a stronger one for tricky issues."
+        "DAX, TMDL, or Power Query (M) — or attach a screenshot of the error dialog below. "
+        "Get an explanation plus a suggested fix. Pick a smaller/cheaper model to save "
+        "tokens, or a stronger one for tricky issues."
     )
+    if validation_errors_text:
+        st.caption("Pre-filled from this session's validation errors — edit as needed.")
     diag_model_label = st.selectbox(
         "Model for diagnosis", list(model_labels.keys()), key="diag_model_label"
     )
     diag_model_id = model_labels[diag_model_label]
     error_text = st.text_area(
         "Error message",
+        value=validation_errors_text,
         height=120,
         key="diag_error_text",
         placeholder="Paste the error or validation message here...",
     )
+    screenshot = st.file_uploader(
+        "Or attach a screenshot of the error (e.g. the Power BI Desktop dialog)",
+        type=["png", "jpg", "jpeg"],
+        key="diag_image",
+    )
+    if screenshot is not None:
+        st.image(screenshot, caption=screenshot.name, width=300)
     extra_context = st.text_input(
         "Optional context (what were you trying to do?)", key="diag_context"
     )
-    if st.button("Get help", disabled=not error_text.strip()):
+    if st.button("Get help", disabled=not (error_text.strip() or screenshot)):
         try:
-            result = client.diagnose_error(diag_model_id, error_text, extra_context or None)
+            image_b64 = base64.b64encode(screenshot.getvalue()).decode() if screenshot else None
+            image_mime = screenshot.type if screenshot else None
+            result = client.diagnose_error(
+                diag_model_id, error_text, extra_context or None, image_b64, image_mime
+            )
             st.markdown(result["answer"])
         except ApiError as exc:
-            st.error(str(exc))
+            st.error(f"Could not get help: {exc}")

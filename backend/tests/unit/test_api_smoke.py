@@ -178,3 +178,72 @@ async def test_diagnose_error_requires_auth(client):
         json={"model_id": "gemini/gemini-2.5-flash", "error_text": "boom"},
     )
     assert r.status_code in (401, 403)
+
+
+@pytest.mark.asyncio
+async def test_diagnose_error_with_image(client, monkeypatch):
+    from app.llm.router import LLMRouter
+
+    captured: dict = {}
+
+    async def fake_complete(self, messages, **kwargs):
+        captured["messages"] = messages
+        return "**Likely cause**: schema mismatch.\n\n**How to fix it**: fix the $schema."
+
+    monkeypatch.setattr(LLMRouter, "complete", fake_complete)
+
+    await client.post(
+        "/auth/register", json={"email": "diagimg@b.com", "password": "password123"}
+    )
+    token = (
+        await client.post(
+            "/auth/login", json={"email": "diagimg@b.com", "password": "password123"}
+        )
+    ).json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # Tiny 1x1 PNG, base64-encoded.
+    tiny_png = (
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+    )
+
+    r = await client.post(
+        "/diagnostics",
+        headers=headers,
+        json={
+            "model_id": "gemini/gemini-2.5-flash",
+            "error_text": "",
+            "image_base64": tiny_png,
+            "image_media_type": "image/png",
+        },
+    )
+    assert r.status_code == 200
+    assert "Likely cause" in r.json()["answer"]
+
+    # The image must be passed through to the LLM as multimodal content.
+    user_content = captured["messages"][1]["content"]
+    assert isinstance(user_content, list)
+    kinds = [c["type"] for c in user_content]
+    assert "text" in kinds and "image_url" in kinds
+    image_part = next(c for c in user_content if c["type"] == "image_url")
+    assert image_part["image_url"]["url"].startswith("data:image/png;base64,")
+
+
+@pytest.mark.asyncio
+async def test_diagnose_error_requires_text_or_image(client):
+    await client.post(
+        "/auth/register", json={"email": "diagempty@b.com", "password": "password123"}
+    )
+    token = (
+        await client.post(
+            "/auth/login", json={"email": "diagempty@b.com", "password": "password123"}
+        )
+    ).json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    r = await client.post(
+        "/diagnostics",
+        headers=headers,
+        json={"model_id": "gemini/gemini-2.5-flash", "error_text": ""},
+    )
+    assert r.status_code == 400

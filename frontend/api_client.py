@@ -115,10 +115,20 @@ class ApiClient:
         return resp.content
 
     # --- diagnostics ---
-    def diagnose_error(self, model_id: str, error_text: str, context: str | None = None) -> dict:
+    def diagnose_error(
+        self,
+        model_id: str,
+        error_text: str,
+        context: str | None = None,
+        image_base64: str | None = None,
+        image_media_type: str | None = None,
+    ) -> dict:
         body: dict = {"model_id": model_id, "error_text": error_text}
         if context:
             body["context"] = context
+        if image_base64:
+            body["image_base64"] = image_base64
+            body["image_media_type"] = image_media_type or "image/png"
         return self._post("/diagnostics", body)
 
     def stream_events(self, session_id: str) -> Iterator[dict]:

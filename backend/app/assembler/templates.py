@@ -14,7 +14,7 @@ import uuid
 def pbip_entry(project_name: str) -> str:
     return json.dumps(
         {
-            "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/pbip/definitionProperties/1.0.0/schema.json",
+            "$schema": "https://developer.microsoft.com/json-schemas/fabric/pbip/pbipProperties/1.0.0/schema.json",
             "version": "1.0",
             "artifacts": [{"report": {"path": f"{project_name}.Report"}}],
             "settings": {"enableAutoRecovery": True},
