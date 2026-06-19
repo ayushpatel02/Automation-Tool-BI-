@@ -3,7 +3,23 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
+
+# TMDL uses true/false for booleans, never YAML-style on/off/yes/no. Some LLMs emit the
+# latter, which causes "Failed to convert value 'off' to Boolean" on PBI Desktop load.
+_TMDL_YAML_BOOLEANS = re.compile(
+    r"^(\s*\w[\w.]*\s*:\s*)(off|on|no|yes)(\s*)$",
+    re.MULTILINE | re.IGNORECASE,
+)
+_BOOL_MAP = {"on": "true", "yes": "true", "off": "false", "no": "false"}
+
+
+def _normalize_tmdl_booleans(tmdl: str) -> str:
+    """Replace YAML-style boolean values with TMDL-required true/false."""
+    return _TMDL_YAML_BOOLEANS.sub(
+        lambda m: m.group(1) + _BOOL_MAP[m.group(2).lower()] + m.group(3), tmdl
+    )
 
 from app.generation.m_sources import m_source_hint
 from app.llm.router import LLMRouter
@@ -95,10 +111,12 @@ def build_repair_messages(
 
 def parse_artifacts(raw: dict) -> SemanticModelArtifacts:
     return SemanticModelArtifacts(
-        model_tmdl=raw.get("model_tmdl", ""),
-        tables=raw.get("tables", {}),
-        relationships_tmdl=raw.get("relationships_tmdl", ""),
-        expressions_tmdl=raw.get("expressions_tmdl", ""),
+        model_tmdl=_normalize_tmdl_booleans(raw.get("model_tmdl", "")),
+        tables={
+            k: _normalize_tmdl_booleans(v) for k, v in raw.get("tables", {}).items()
+        },
+        relationships_tmdl=_normalize_tmdl_booleans(raw.get("relationships_tmdl", "")),
+        expressions_tmdl=_normalize_tmdl_booleans(raw.get("expressions_tmdl", "")),
     )
 
 

@@ -13,6 +13,9 @@ RULES:
 - Each table needs a partition with a Power Query (M) `source` expression that reads from
   the data source. Use the M source template provided in the context for this connector.
 - Do not invent calculated columns unless explicitly required by the request.
+- TMDL IS NOT YAML. Boolean property values MUST be `true` or `false` — NEVER write
+  `on`, `off`, `yes`, or `no`. For example: `isHidden: true` not `isHidden: on`.
+  Flag properties with no value (e.g. just `isHidden` on its own line) mean `true`.
 
 TMDL SYNTAX EXAMPLE:
 table Sales
