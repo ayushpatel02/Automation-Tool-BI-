@@ -54,9 +54,89 @@ def _normalize_m_types(tmdl: str) -> str:
     return _M_TYPE_RE.sub(lambda m: _M_TYPE_FIXES[m.group(1).lower()], tmdl)
 
 
+def _normalize_tmdl_indentation(tmdl: str) -> str:
+    """Convert space-indented TMDL to tab-indented; M source blocks are left intact."""
+    lines = tmdl.split("\n")
+    # Fast path: nothing starts with a space.
+    if not any(ln and ln[0] == " " for ln in lines):
+        return tmdl
+
+    # Find the smallest non-zero leading-space count on TMDL lines (skip M blocks).
+    in_m = False
+    indent_sizes: list[int] = []
+    for ln in lines:
+        stripped = ln.strip()
+        if not in_m and "```" in ln and stripped.lstrip("source").lstrip().lstrip("=").lstrip().startswith("```"):
+            in_m = True
+            continue
+        if in_m:
+            if stripped == "```":
+                in_m = False
+            continue
+        if ln and ln[0] == " ":
+            indent_sizes.append(len(ln) - len(ln.lstrip(" ")))
+
+    unit = min(indent_sizes) if indent_sizes else 4
+
+    result: list[str] = []
+    in_m = False
+    for ln in lines:
+        stripped = ln.strip()
+        if not in_m and "```" in ln and stripped.lstrip("source").lstrip().lstrip("=").lstrip().startswith("```"):
+            in_m = True
+            # The `source = ``` line is itself a TMDL line — fix its indentation.
+            if ln and ln[0] == " ":
+                body = ln.lstrip(" ")
+                tabs = (len(ln) - len(body)) // unit
+                result.append("\t" * tabs + body)
+            else:
+                result.append(ln)
+            continue
+        if in_m:
+            result.append(ln)  # preserve M source content as-is
+            if stripped == "```":
+                in_m = False
+            continue
+        if ln and ln[0] == " ":
+            body = ln.lstrip(" ")
+            tabs = (len(ln) - len(body)) // unit
+            result.append("\t" * tabs + body)
+        else:
+            result.append(ln)
+    return "\n".join(result)
+
+
+# Partition mode values must be lowercase (or camelCase); LLMs often emit Title Case.
+_TMDL_MODE_RE = re.compile(
+    r"^(\s*mode\s*:\s*)(Import|DirectQuery|DualMode|Push|Streaming|IMPORT|DIRECTQUERY)(\s*)$",
+    re.MULTILINE,
+)
+_MODE_MAP = {
+    "Import": "import",
+    "DirectQuery": "directQuery",
+    "DualMode": "dualMode",
+    "Push": "push",
+    "Streaming": "streaming",
+    "IMPORT": "import",
+    "DIRECTQUERY": "directQuery",
+}
+
+
+def _normalize_tmdl_mode(tmdl: str) -> str:
+    """Fix partition mode to correct TMDL casing (Import → import, etc.)."""
+    return _TMDL_MODE_RE.sub(
+        lambda m: m.group(1) + _MODE_MAP.get(m.group(2), m.group(2).lower()) + m.group(3),
+        tmdl,
+    )
+
+
 def _sanitize_tmdl(tmdl: str) -> str:
     """Fix the common LLM TMDL/M mistakes that break Power BI Desktop on load."""
-    return _normalize_m_types(_normalize_tmdl_booleans(tmdl))
+    tmdl = _normalize_tmdl_indentation(tmdl)
+    tmdl = _normalize_tmdl_booleans(tmdl)
+    tmdl = _normalize_m_types(tmdl)
+    tmdl = _normalize_tmdl_mode(tmdl)
+    return tmdl
 
 
 def _load(name: str) -> str:

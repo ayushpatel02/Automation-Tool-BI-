@@ -23,6 +23,10 @@ RULES:
 - TMDL IS NOT YAML. Boolean property values MUST be `true` or `false` — NEVER write
   `on`, `off`, `yes`, or `no`. For example: `isHidden: true` not `isHidden: on`.
   Flag properties with no value (e.g. just `isHidden` on its own line) mean `true`.
+- Indentation MUST use TAB characters, not spaces. Every level of nesting adds one tab.
+  Never use 2-space or 4-space indentation — TMDL will reject it.
+- Partition mode values are strictly lowercase/camelCase: `import`, `directQuery`,
+  `dualMode`. Never write `Import`, `DirectQuery`, or `DualMode`.
 
 TMDL SYNTAX EXAMPLE:
 table Sales

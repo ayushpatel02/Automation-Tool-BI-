@@ -5,6 +5,8 @@ import pytest
 from app.generation.semantic_model import (
     _normalize_m_types,
     _normalize_tmdl_booleans,
+    _normalize_tmdl_indentation,
+    _normalize_tmdl_mode,
 )
 from app.schemas.generation import SemanticModelArtifacts
 from app.validation import validate_semantic_model
@@ -79,6 +81,65 @@ def test_normalize_m_types_fixes_invalid_identifiers():
     assert "type number" in out        # double -> number
     assert "type datetime" in out      # dateTime -> datetime
     assert "type logical" in out       # boolean -> logical
+
+
+def test_normalize_tmdl_indentation_converts_spaces_to_tabs():
+    """LLM-generated TMDL with 4-space indentation must be rewritten to tabs."""
+    spaced = (
+        "model M\n"
+        "    culture: en-US\n"
+        "    defaultPowerBIDataSourceVersion: powerBI_V3\n"
+    )
+    result = _normalize_tmdl_indentation(spaced)
+    assert result == "model M\n\tculture: en-US\n\tdefaultPowerBIDataSourceVersion: powerBI_V3\n"
+
+
+def test_normalize_tmdl_indentation_preserves_m_source_block():
+    """M source code inside backtick blocks must not have its indentation changed."""
+    tmdl = (
+        "table Sales\n"
+        "    partition Sales = m\n"
+        "        mode: import\n"
+        "        source = ```\n"
+        "                let\n"
+        "                    Source = Sql.Database(\"s\", \"d\")\n"
+        "                in\n"
+        "                    Source\n"
+        "                ```\n"
+    )
+    result = _normalize_tmdl_indentation(tmdl)
+    # TMDL structural lines converted
+    assert "\tpartition Sales = m\n" in result
+    assert "\t\tmode: import\n" in result
+    # M source lines preserved as-is
+    assert "                let\n" in result
+    assert "                    Source = Sql.Database" in result
+
+
+def test_normalize_tmdl_indentation_already_tab_indented_unchanged():
+    tab_tmdl = "model M\n\tculture: en-US\n"
+    assert _normalize_tmdl_indentation(tab_tmdl) == tab_tmdl
+
+
+def test_normalize_tmdl_mode_fixes_title_case():
+    """mode: Import and mode: DirectQuery must become mode: import / mode: directQuery."""
+    tmdl = (
+        "partition P = m\n"
+        "\tmode: Import\n"
+        "partition Q = m\n"
+        "\tmode: DirectQuery\n"
+        "partition R = m\n"
+        "\tmode: DualMode\n"
+        "partition S = m\n"
+        "\tmode: import\n"  # already correct — must not change
+    )
+    result = _normalize_tmdl_mode(tmdl)
+    assert "\tmode: import\n" in result
+    assert "\tmode: directQuery\n" in result
+    assert "\tmode: dualMode\n" in result
+    assert "Import" not in result
+    assert "DirectQuery" not in result
+    assert "DualMode" not in result
 
 
 def test_normalize_m_types_leaves_tmdl_datatype_and_valid_m_untouched():
