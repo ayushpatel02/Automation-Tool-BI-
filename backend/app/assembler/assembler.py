@@ -109,15 +109,26 @@ def _write_report(project_name: str, report: ReportArtifacts, root: Path) -> Non
 
 
 def zip_pbip(project_root: Path, project_name: str) -> Path:
-    """Zip the .pbip project (folder + entry file) for download."""
+    """Zip the .pbip project (folder + entry file) for download.
+
+    The zip layout matches Power BI Desktop's native format: the .pbip entry file,
+    .SemanticModel/, and .Report/ all sit at the top level — no intermediate
+    {project_name}/ wrapper folder.
+    """
     parent = project_root.parent
     archive_base = parent / f"{project_name}"
-    # Stage the entry file + folder into a temp dir so both land in the zip.
     staging = parent / f"_stage_{project_name}"
     if staging.exists():
         shutil.rmtree(staging)
     staging.mkdir()
-    shutil.copytree(project_root, staging / project_name)
+    # Copy .SemanticModel/ and .Report/ directly into staging so they are siblings
+    # of the .pbip file (matching the layout Power BI Desktop expects).
+    for item in project_root.iterdir():
+        dst = staging / item.name
+        if item.is_dir():
+            shutil.copytree(item, dst)
+        else:
+            shutil.copy2(item, dst)
     entry = parent / f"{project_name}.pbip"
     if entry.exists():
         shutil.copy(entry, staging / f"{project_name}.pbip")
