@@ -2,7 +2,10 @@
 
 import pytest
 
-from app.generation.semantic_model import _normalize_tmdl_booleans
+from app.generation.semantic_model import (
+    _normalize_m_types,
+    _normalize_tmdl_booleans,
+)
 from app.schemas.generation import SemanticModelArtifacts
 from app.validation import validate_semantic_model
 
@@ -52,3 +55,36 @@ def test_normalize_tmdl_booleans():
     assert "isAvailable: true" in result     # unchanged
     assert "isActive: false" in result       # unchanged
     assert "'turn off noise'" in result      # string not modified
+
+
+def test_normalize_m_types_fixes_invalid_identifiers():
+    """TMDL-style M type names must become valid Power Query M types."""
+    m = (
+        'let Source = Sql.Database("h", "d"), '
+        'data = Source{[Item="Sales"]}[Data], '
+        'typed = Table.TransformColumnTypes(data, {'
+        '{"Id", type int64}, '
+        '{"Name", type string}, '
+        '{"Price", type decimal}, '
+        '{"Ratio", type double}, '
+        '{"When", type dateTime}, '
+        '{"Flag", type boolean}'
+        '}) in typed'
+    )
+    out = _normalize_m_types(m)
+    assert "type int64" not in out
+    assert "Int64.Type" in out
+    assert "type text" in out          # string -> text
+    assert "Currency.Type" in out      # decimal -> Currency.Type
+    assert "type number" in out        # double -> number
+    assert "type datetime" in out      # dateTime -> datetime
+    assert "type logical" in out       # boolean -> logical
+
+
+def test_normalize_m_types_leaves_tmdl_datatype_and_valid_m_untouched():
+    # TMDL `dataType: int64` is NOT an M `type` expression — must be left alone.
+    tmdl_col = "\tcolumn Id\n\t\tdataType: int64\n\t\tsourceColumn: Id\n"
+    assert _normalize_m_types(tmdl_col) == tmdl_col
+    # Already-valid M types must be preserved.
+    valid_m = 'Table.TransformColumnTypes(t, {{"A", type text}, {"B", type number}})'
+    assert _normalize_m_types(valid_m) == valid_m

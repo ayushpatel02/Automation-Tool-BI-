@@ -11,7 +11,14 @@ RULES:
 - Each table file starts with: table <TableName>
 - Indentation is significant in TMDL: 4 spaces per level. Be precise.
 - Each table needs a partition with a Power Query (M) `source` expression that reads from
-  the data source. Use the M source template provided in the context for this connector.
+  the data source. Use the M source template provided in the context for this connector
+  VERBATIM, substituting only the table/schema/database names. Do NOT add extra M steps.
+- Do NOT add `Table.TransformColumnTypes` or any other type-casting steps to the M source.
+  Column data types are declared by each column's `dataType` in TMDL, NOT in the M query.
+- If you ever write an M `type` in a query, use only valid Power Query M types
+  (`type text`, `type number`, `type logical`, `type date`, `type datetime`,
+  `type duration`, `type binary`) or ascribed types like `Int64.Type` — NEVER TMDL
+  type names. `type int64`, `type string`, `type decimal`, `type dateTime` are INVALID M.
 - Do not invent calculated columns unless explicitly required by the request.
 - TMDL IS NOT YAML. Boolean property values MUST be `true` or `false` — NEVER write
   `on`, `off`, `yes`, or `no`. For example: `isHidden: true` not `isHidden: on`.

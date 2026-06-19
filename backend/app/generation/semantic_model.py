@@ -6,6 +6,14 @@ import json
 import re
 from pathlib import Path
 
+from app.generation.m_sources import m_source_hint
+from app.llm.router import LLMRouter
+from app.schemas.connector import ConnectorType, SchemaProfile, SourceInfo
+from app.schemas.generation import SemanticModelArtifacts
+
+_PROMPTS = Path(__file__).parent / "prompts"
+
+
 # TMDL uses true/false for booleans, never YAML-style on/off/yes/no. Some LLMs emit the
 # latter, which causes "Failed to convert value 'off' to Boolean" on PBI Desktop load.
 _TMDL_YAML_BOOLEANS = re.compile(
@@ -21,12 +29,34 @@ def _normalize_tmdl_booleans(tmdl: str) -> str:
         lambda m: m.group(1) + _BOOL_MAP[m.group(2).lower()] + m.group(3), tmdl
     )
 
-from app.generation.m_sources import m_source_hint
-from app.llm.router import LLMRouter
-from app.schemas.connector import ConnectorType, SchemaProfile, SourceInfo
-from app.schemas.generation import SemanticModelArtifacts
 
-_PROMPTS = Path(__file__).parent / "prompts"
+# Inside partition M (Power Query), `type <name>` requires a valid M type. LLMs often leak
+# TMDL data-type names (int64, string, dateTime, ...) into Table.TransformColumnTypes steps,
+# producing "The type identifier is invalid" on load. Map them to valid M type identifiers.
+# (TMDL's own `dataType: int64` lines are untouched: there's no `type ` keyword there.)
+_M_TYPE_FIXES = {
+    "string": "type text",
+    "int64": "Int64.Type",
+    "double": "type number",
+    "decimal": "Currency.Type",
+    "datetime": "type datetime",
+    "boolean": "type logical",
+    "binary": "type binary",
+}
+_M_TYPE_RE = re.compile(
+    r"\btype\s+(string|int64|double|decimal|dateTime|boolean|binary)\b",
+    re.IGNORECASE,
+)
+
+
+def _normalize_m_types(tmdl: str) -> str:
+    """Rewrite invalid TMDL-style M type identifiers (type int64, ...) to valid M types."""
+    return _M_TYPE_RE.sub(lambda m: _M_TYPE_FIXES[m.group(1).lower()], tmdl)
+
+
+def _sanitize_tmdl(tmdl: str) -> str:
+    """Fix the common LLM TMDL/M mistakes that break Power BI Desktop on load."""
+    return _normalize_m_types(_normalize_tmdl_booleans(tmdl))
 
 
 def _load(name: str) -> str:
@@ -111,12 +141,10 @@ def build_repair_messages(
 
 def parse_artifacts(raw: dict) -> SemanticModelArtifacts:
     return SemanticModelArtifacts(
-        model_tmdl=_normalize_tmdl_booleans(raw.get("model_tmdl", "")),
-        tables={
-            k: _normalize_tmdl_booleans(v) for k, v in raw.get("tables", {}).items()
-        },
-        relationships_tmdl=_normalize_tmdl_booleans(raw.get("relationships_tmdl", "")),
-        expressions_tmdl=_normalize_tmdl_booleans(raw.get("expressions_tmdl", "")),
+        model_tmdl=_sanitize_tmdl(raw.get("model_tmdl", "")),
+        tables={k: _sanitize_tmdl(v) for k, v in raw.get("tables", {}).items()},
+        relationships_tmdl=_sanitize_tmdl(raw.get("relationships_tmdl", "")),
+        expressions_tmdl=_sanitize_tmdl(raw.get("expressions_tmdl", "")),
     )
 
 
