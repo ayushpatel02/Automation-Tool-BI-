@@ -8,6 +8,7 @@ recent and evolving.
 from __future__ import annotations
 
 import json
+import re
 import uuid
 
 
@@ -45,6 +46,41 @@ def definition_pbir(project_name: str) -> str:
         },
         indent=2,
     )
+
+
+def definition_pbism() -> str:
+    """The semantic model entry point (.SemanticModel/definition.pbism).
+
+    Power BI Desktop requires this file alongside the TMDL `definition/` folder; without
+    it, opening the project fails with "DatasetDefinition: Required artifact is missing".
+    `version` 4.0+ tells Power BI the model is stored as TMDL (the `definition/` folder)
+    rather than legacy TMSL (model.bim).
+    """
+    return json.dumps(
+        {
+            "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/semanticModel/definitionProperties/1.0.0/schema.json",
+            "version": "4.2",
+            "settings": {},
+        },
+        indent=2,
+    )
+
+
+def _tmdl_identifier(name: str) -> str:
+    """Render a TMDL object name, single-quoting it when it isn't a bare identifier
+    (e.g. contains spaces), as TMDL requires."""
+    if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
+        return name
+    return "'" + name.replace("'", "''") + "'"
+
+
+def database_tmdl(project_name: str) -> str:
+    """database.tmdl — declares the database object + compatibility level.
+
+    Required next to model.tmdl for a TMDL semantic model. Compatibility level 1567 is
+    the current Power BI Desktop default for semantic models.
+    """
+    return f"database {_tmdl_identifier(project_name)}\n\tcompatibilityLevel: 1567\n"
 
 
 def model_tmdl_header(project_name: str) -> str:

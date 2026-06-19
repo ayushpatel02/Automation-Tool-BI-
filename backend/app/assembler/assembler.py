@@ -42,7 +42,13 @@ def _write_semantic_model(
     (sm / ".platform").write_text(
         tpl.platform_file(project_name, "SemanticModel"), encoding="utf-8"
     )
+    # Semantic model entry point — Power BI fails to open the project without it.
+    (sm / "definition.pbism").write_text(tpl.definition_pbism(), encoding="utf-8")
 
+    # database.tmdl (compatibility level) is required alongside model.tmdl.
+    (definition / "database.tmdl").write_text(
+        tpl.database_tmdl(project_name), encoding="utf-8"
+    )
     model_content = model.model_tmdl.strip() or tpl.model_tmdl_header(project_name)
     (definition / "model.tmdl").write_text(model_content, encoding="utf-8")
     if model.relationships_tmdl.strip():
