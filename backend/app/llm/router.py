@@ -10,11 +10,15 @@ migration is handled inside LiteLLM.
 from __future__ import annotations
 
 import json
+import logging
+import re
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+logger = logging.getLogger(__name__)
 
 _MODELS_PATH = Path(__file__).parent / "models.yaml"
 
@@ -56,7 +60,7 @@ class LLMRouter:
         messages: list[dict],
         *,
         temperature: float = 0.1,
-        max_tokens: int = 8192,
+        max_tokens: int = 16384,
     ) -> str:
         import litellm
 
@@ -78,10 +82,15 @@ class LLMRouter:
         *,
         json_schema: dict | None = None,
         temperature: float = 0.1,
-        max_tokens: int = 8192,
+        max_tokens: int = 32768,
     ) -> dict:
         """Request JSON output. Uses structured output when the schema is provided and the
-        provider supports it; otherwise falls back to JSON mode + tolerant parsing."""
+        provider supports it; otherwise falls back to JSON mode + tolerant parsing.
+
+        max_tokens defaults to 32 768 (raised from 8 192) because TMDL generation for a
+        multi-table schema can easily produce 10 000+ output tokens and a truncated JSON
+        has no closing brace, causing the parser to fail with "Model did not return JSON".
+        """
         import litellm
 
         kwargs: dict[str, Any] = {
@@ -105,24 +114,118 @@ class LLMRouter:
         except Exception as exc:  # noqa: BLE001
             raise LLMError(f"LLM JSON completion failed: {exc}") from exc
 
-        return _parse_json_lenient(content)
+        if not content.strip():
+            # Empty content — most likely an invalid/missing API key or provider error.
+            raise LLMError(
+                "Model returned empty content. Check that your API key is set and valid "
+                f"for the selected model ({self.model_id})."
+            )
+
+        return _parse_json_lenient(content, model_id=self.model_id)
 
 
-def _parse_json_lenient(content: str) -> dict:
-    """Parse JSON, tolerating ```json fences and surrounding prose."""
+# ---------------------------------------------------------------------------
+# JSON extraction helpers
+# ---------------------------------------------------------------------------
+
+# Matches the opening of a fenced code block, capturing the optional language tag.
+_FENCE_RE = re.compile(r"```(?:json)?\s*\n?", re.IGNORECASE)
+
+
+def _parse_json_lenient(content: str, *, model_id: str = "") -> dict:
+    """Parse JSON from a model response, tolerating prose, fences, and thinking tokens.
+
+    Strategy (each step only runs if the previous failed):
+      1. Direct parse — model obeyed JSON mode perfectly.
+      2. Strip leading ```[json] fence and trailing ``` — common with some providers.
+      3. Extract the outermost {...} block — handles prose preamble/postamble, thinking
+         tokens, or a JSON block embedded in a longer response.
+      4. Raise with a diagnostic excerpt so engineers can see what the model returned.
+    """
+    original = content  # kept for the error message
     content = content.strip()
-    if content.startswith("```"):
-        content = content.split("```", 2)[1]
-        if content.startswith("json"):
-            content = content[4:]
-        content = content.strip().rstrip("`").strip()
+
+    # --- 1. Direct parse --------------------------------------------------
     try:
-        return json.loads(content)
-    except json.JSONDecodeError as outer:
-        start, end = content.find("{"), content.rfind("}")
-        if start != -1 and end != -1 and end > start:
+        result = json.loads(content)
+        if isinstance(result, dict):
+            return result
+    except json.JSONDecodeError:
+        pass
+
+    # --- 2. Strip markdown fence ------------------------------------------
+    m = _FENCE_RE.search(content)
+    if m:
+        body = content[m.end():]
+        fence_end = body.rfind("```")
+        if fence_end != -1:
+            body = body[:fence_end]
+        try:
+            result = json.loads(body.strip())
+            if isinstance(result, dict):
+                return result
+        except json.JSONDecodeError:
+            pass
+
+    # --- 3. Extract outermost {...} ---------------------------------------
+    # Use a brace counter to find the outermost JSON object even if there is
+    # text before or after it (prose preamble, trailing notes, thinking output).
+    first_brace = content.find("{")
+    if first_brace != -1:
+        depth = 0
+        in_str = False
+        escape = False
+        last_close = -1
+        for i, ch in enumerate(content[first_brace:], start=first_brace):
+            if escape:
+                escape = False
+                continue
+            if ch == "\\" and in_str:
+                escape = True
+                continue
+            if ch == '"':
+                in_str = not in_str
+                continue
+            if in_str:
+                continue
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    last_close = i
+                    break  # found the complete outermost object
+        if last_close != -1:
+            candidate = content[first_brace : last_close + 1]
             try:
-                return json.loads(content[start : end + 1])
+                result = json.loads(candidate)
+                if isinstance(result, dict):
+                    logger.debug(
+                        "JSON extracted from offset %d–%d (model %s had prose around JSON)",
+                        first_brace, last_close, model_id,
+                    )
+                    return result
             except json.JSONDecodeError as exc:
-                raise LLMError(f"Could not parse JSON from model output: {exc}") from exc
-        raise LLMError("Model did not return JSON") from outer
+                snippet = _excerpt(original)
+                raise LLMError(
+                    f"Model returned a JSON-like block but it is malformed: {exc}\n"
+                    f"Response excerpt: {snippet}"
+                ) from exc
+
+    # --- 4. Nothing found -------------------------------------------------
+    snippet = _excerpt(original)
+    raise LLMError(
+        "Model did not return JSON. "
+        "This usually means the output was truncated (try a shorter schema), "
+        "the API key is invalid, or the model ignored the JSON instruction.\n"
+        f"Response excerpt ({model_id}): {snippet}"
+    )
+
+
+def _excerpt(text: str, max_chars: int = 300) -> str:
+    """Return a safe excerpt of model output for error messages."""
+    text = text.strip()
+    if len(text) <= max_chars:
+        return repr(text)
+    return repr(text[:max_chars] + " …[truncated]")
+
