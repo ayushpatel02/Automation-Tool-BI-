@@ -79,8 +79,32 @@ def test_small_file_is_embedded_as_base64(tmp_path):
 
     assert "Binary.FromText(" in out
     assert "BinaryEncoding.Base64" in out
+    assert "Binary.Decompress(" in out  # gzip-compressed embed
+    assert "Compression.GZip" in out
     assert "File.Contents(" not in out  # no relative path left behind
     assert data_files == {}
+
+
+def test_embedded_data_roundtrips_to_original_bytes(tmp_path):
+    """The gzip+Base64 embed must decode back to the EXACT original file bytes.
+
+    This proves the M expression Binary.Decompress(Binary.FromText(...), Compression.GZip)
+    will reconstruct the data Power BI loads — a wrong pairing would corrupt every row.
+    """
+    import base64 as _b64
+    import gzip as _gz
+    import re as _re
+
+    server = tmp_path / "uuid.csv"
+    _write_csv(server, n_rows=25)
+    original = server.read_bytes()
+
+    profile = _profile(server, original_name="StockData.csv")
+    patched, _ = patch_file_sources(_model("StockData.csv"), profile)
+    out = patched.tables["StockData.tmdl"]
+
+    payload = _re.search(r'Binary\.FromText\("([^"]*)"', out).group(1)
+    assert _gz.decompress(_b64.b64decode(payload)) == original
 
 
 def test_no_relative_file_contents_survives_regardless_of_ref(tmp_path):
@@ -134,19 +158,18 @@ def test_large_file_bundled_with_absolute_placeholder(tmp_path, monkeypatch):
 
 
 def test_oversized_file_is_bundled_not_embedded_past_10mb_query_limit(tmp_path, monkeypatch):
-    """A file whose Base64 would breach the embed budget is bundled, never embedded.
+    """A file whose (compressed) Base64 would breach the embed budget is bundled.
 
     Regression for "We were unable to update the queries because they exceed the size
-    limit of 10MB": Base64 inflates bytes by 4/3, so embedding a large file overflows
-    Power BI's 10 MB query limit. Such files must be bundled with an absolute path.
+    limit of 10MB": embedding too much inline blows Power BI's 10 MB query limit, so a
+    file that overflows the budget even after gzip must be bundled with an absolute path.
     """
     import app.generation.semantic_model as sm
 
-    # Shrink the budget so a tiny test file deterministically exceeds it.
-    monkeypatch.setattr(sm, "_EMBED_BUDGET_BYTES", 8)
+    # Shrink the budget so even a tiny (compressed) file deterministically exceeds it.
+    monkeypatch.setattr(sm, "_EMBED_BUDGET_BYTES", 4)
     server = tmp_path / "uuid.csv"
-    _write_csv(server, n_rows=50)  # Base64 length > 8 chars
-    assert sm._b64_len(server.stat().st_size) > sm._EMBED_BUDGET_BYTES
+    _write_csv(server, n_rows=50)
 
     profile = _profile(server, original_name="StockData.csv")
     patched, data_files = patch_file_sources(_model("StockData.csv"), profile)
@@ -154,6 +177,31 @@ def test_oversized_file_is_bundled_not_embedded_past_10mb_query_limit(tmp_path, 
 
     assert "Binary.FromText(" not in out  # not embedded — would blow the 10 MB limit
     assert data_files == {"StockData.csv": str(server)}  # bundled instead
+
+
+def test_gzip_embed_is_far_smaller_than_raw_base64(tmp_path, monkeypatch):
+    """Compressing first lets a file embed that a raw Base64 embed could not.
+
+    A repetitive CSV whose raw Base64 would exceed the budget still embeds because gzip
+    shrinks it well under the budget — the whole point of the gzip step.
+    """
+    import app.generation.semantic_model as sm
+
+    # Highly repetitive content compresses dramatically (>20x).
+    server = tmp_path / "uuid.csv"
+    server.write_text("id,name,amount\n" + ("1,Row,10\n" * 20000), encoding="utf-8")
+    raw_b64 = sm._b64_len(server.stat().st_size)
+
+    # Budget below the raw Base64 size but far above the gzipped size.
+    monkeypatch.setattr(sm, "_EMBED_BUDGET_BYTES", raw_b64 // 4)
+    assert raw_b64 > sm._EMBED_BUDGET_BYTES  # a raw Base64 embed would NOT fit
+
+    profile = _profile(server, original_name="StockData.csv")
+    patched, data_files = patch_file_sources(_model("StockData.csv"), profile)
+
+    # gzip made it fit: embedded inline, nothing bundled.
+    assert "Binary.Decompress(" in patched.tables["StockData.tmdl"]
+    assert data_files == {}
 
 
 def test_missing_server_file_still_gets_absolute_placeholder(tmp_path):

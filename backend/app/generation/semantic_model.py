@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import gzip
 import json
 import re
 from pathlib import Path
@@ -210,41 +211,63 @@ def sanitize_model(model: SemanticModelArtifacts) -> SemanticModelArtifacts:
 
 # --- File-source patching (CSV / Excel) ---------------------------------------
 # CSV/Excel partitions are generated with `File.Contents("<name>")`. Power Query's
-# File.Contents REQUIRES an absolute path — a bare filename fails at load with
-# "The supplied file path must be a valid absolute path", and any absolute server
-# path we used would not exist on the user's machine. The only portable fix is to
-# embed the file's bytes directly in the M expression via Binary.FromText, so the
-# .pbip is fully self-contained and loads with zero setup. patch_file_sources()
-# does this once, after all generation/repair cycles are done (so the Base64 blob
-# never bloats a repair-prompt's context).
+# File.Contents REQUIRES an absolute path that exists on the machine opening the
+# .pbip — neither a bare filename nor the backend's server path works. The portable
+# fix is to embed the file's bytes directly in the M expression so the .pbip is fully
+# self-contained and loads with ZERO external path. patch_file_sources() does this
+# once, after all generation/repair cycles (so the blob never bloats a repair prompt).
 #
-# BUT Power BI Desktop rejects a model whose Power Query (M) definitions exceed 10 MB
-# in total ("We were unable to update the queries because they exceed the size limit
-# of 10MB"). Base64 inflates bytes by 4/3, so a ~7.5 MB file already overflows. We
-# therefore embed only while the *encoded* total stays under a budget that leaves
-# headroom for the surrounding M code:
+# Power BI rejects a model whose M query definitions exceed 10 MB ("We were unable to
+# update the queries because they exceed the size limit of 10MB"). A raw Base64 embed
+# inflates bytes by 4/3, so even a ~7.5 MB file overflows. To embed far larger files we
+# GZIP-compress the bytes first, then Base64 them, and decompress in M:
 #
-#   - encoded size fits the budget → embed as Base64 (self-contained; the normal path)
-#   - otherwise                    → bundle the file in the zip and rewrite the
-#                                     reference to an absolute placeholder the user
-#                                     edits once
+#     Binary.Decompress(Binary.FromText("<b64>", BinaryEncoding.Base64), Compression.GZip)
+#
+# CSV / text data compresses ~5-10x, so a multi-MB CSV embeds in well under 10 MB and
+# needs no path at all. Only a file that stays over the budget even after compression
+# (rare: an already-compressed blob tens of MB in size) falls back to being bundled in
+# the zip with an absolute placeholder path.
 
 _FILE_CONTENTS_RE = re.compile(r'\bFile\.Contents\("([^"]*)"\)')
 _BINARY_FROMTEXT_RE = re.compile(r'Binary\.FromText\("([^"]*)"')
 # Power BI's hard limit on the combined size of all M query definitions.
 _QUERY_SIZE_LIMIT_BYTES = 10 * 1024 * 1024  # 10 MB
-# Max TOTAL Base64 we will embed across the whole model. Kept below the 10 MB query
-# limit so the M scaffolding (let/in, Csv.Document, column types, other tables) fits
-# in the remaining headroom. ~8 MB of Base64 ≈ a 6 MB source file.
-_EMBED_BUDGET_BYTES = 8 * 1024 * 1024  # 8 MB
-# Placeholder absolute path for a file too large to embed. It is absolute (so it does
-# not trigger the "must be a valid absolute path" error) and obvious.
+# Max TOTAL Base64 we will embed across the whole model. Kept under the 10 MB query
+# limit with headroom for the surrounding M scaffolding (let/in, Csv.Document, column
+# types, other tables). Because we gzip first, this budget covers source files many
+# times larger than 9 MB.
+_EMBED_BUDGET_BYTES = 9 * 1024 * 1024  # 9 MB of (compressed) Base64
+# Don't even read+compress a file larger than this (memory/CPU guard); bundle it.
+_MAX_EMBED_SOURCE_BYTES = 80 * 1024 * 1024  # 80 MB
+# Placeholder absolute path for the rare file too large to embed. It is absolute (so it
+# does not trigger the "must be a valid absolute path" error) and obvious.
 _PLACEHOLDER_DIR = "C:\\PowerBI-Data\\"
 
 
 def _b64_len(raw_bytes: int) -> int:
-    """Predicted Base64 length for a file of *raw_bytes* bytes (4 chars per 3 bytes)."""
+    """Predicted Base64 length for *raw_bytes* bytes (4 chars per 3 bytes).
+
+    Kept as a small utility for predicting encoded size; the embed path measures the
+    actual compressed Base64 length rather than relying on this.
+    """
     return 4 * ((raw_bytes + 2) // 3)
+
+
+def _gzip_b64_embed(raw: bytes) -> str:
+    """Return an M expression that reconstructs *raw* bytes inline (gzip + Base64).
+
+    Pairs Python ``gzip.compress`` (which emits a gzip stream with header/footer) with
+    Power Query ``Compression.GZip``, so the round-trip is exact. ``mtime=0`` keeps the
+    output deterministic (no embedded timestamp), so re-running generation on the same
+    file yields byte-identical TMDL.
+    """
+    compressed = gzip.compress(raw, compresslevel=9, mtime=0)
+    b64 = base64.b64encode(compressed).decode()
+    return (
+        f'Binary.Decompress(Binary.FromText("{b64}", BinaryEncoding.Base64), '
+        "Compression.GZip)"
+    )
 
 
 def _file_sources(profile: SchemaProfile) -> list[SourceInfo]:
@@ -306,6 +329,27 @@ def patch_file_sources(
     data_files: dict[str, str] = {}
     new_tables: dict[str, str] = {}
     embedded_b64 = 0  # running total of Base64 chars already committed to the model
+    embed_cache: dict[str, str | None] = {}  # server_path -> M embed expr (or None)
+
+    def embed_for(server_file: Path) -> str | None:
+        """Return the gzip+Base64 M expression for *server_file*, or None if it can't
+        be embedded within the remaining budget. Memoized per path."""
+        nonlocal embedded_b64
+        key = str(server_file)
+        if key in embed_cache:
+            return embed_cache[key]
+        size = server_file.stat().st_size
+        if size > _MAX_EMBED_SOURCE_BYTES:
+            embed_cache[key] = None
+            return None
+        expr = _gzip_b64_embed(server_file.read_bytes())
+        b64_len = len(_BINARY_FROMTEXT_RE.search(expr).group(1))
+        if embedded_b64 + b64_len > _EMBED_BUDGET_BYTES:
+            embed_cache[key] = None
+            return None
+        embedded_b64 += b64_len
+        embed_cache[key] = expr
+        return expr
 
     for fname, content in artifacts.tables.items():
         if "Binary.FromText(" in content:
@@ -328,18 +372,15 @@ def patch_file_sources(
             server_file = Path(server_path)
             display = path_to_display.get(server_path, server_file.name)
 
-            if server_file.exists():
-                # File reachable on the server — embed if it fits the budget, else bundle.
-                b64_len = _b64_len(server_file.stat().st_size)
-                if embedded_b64 + b64_len <= _EMBED_BUDGET_BYTES:
-                    b64 = base64.b64encode(server_file.read_bytes()).decode()
-                    replacement = f'Binary.FromText("{b64}", BinaryEncoding.Base64)'
-                    embedded_b64 += len(b64)
-                else:
-                    # Too large to embed: bundle the file and point at an ABSOLUTE
-                    # placeholder so Power BI doesn't reject it as a relative path.
-                    data_files[display] = server_path
-                    replacement = f'File.Contents("{_PLACEHOLDER_DIR}{display}")'
+            embed_expr = embed_for(server_file) if server_file.exists() else None
+            if embed_expr is not None:
+                # Self-contained: data reconstructed inline, no external path at all.
+                replacement = embed_expr
+            elif server_file.exists():
+                # Too large to embed even compressed: bundle the file and point at an
+                # ABSOLUTE placeholder so Power BI doesn't reject it as a relative path.
+                data_files[display] = server_path
+                replacement = f'File.Contents("{_PLACEHOLDER_DIR}{display}")'
             else:
                 # Server file not found (deleted/moved between upload and generation):
                 # still replace the relative path with an absolute placeholder so the
