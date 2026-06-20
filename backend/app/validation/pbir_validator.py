@@ -62,6 +62,15 @@ def _validate_against_schema(obj: dict, file_label: str) -> list[ValidationError
         return []
 
 
+def _tmdl_identifier(rest: str) -> str:
+    """Parse a TMDL name that may be single-quoted (e.g. 'Stock Data' or Sales)."""
+    rest = rest.strip()
+    if rest.startswith("'"):
+        end = rest.find("'", 1)
+        return rest[1:end] if end > 0 else rest.strip("'")
+    return rest.split()[0] if rest else rest
+
+
 def _semantic_index(model: SemanticModelArtifacts) -> dict[str, set[str]]:
     """Build {entity -> {column/measure names}} from the TMDL artifacts."""
     index: dict[str, set[str]] = {}
@@ -71,12 +80,12 @@ def _semantic_index(model: SemanticModelArtifacts) -> dict[str, set[str]]:
         for line in content.splitlines():
             s = line.strip()
             if s.startswith("column "):
-                names.add(s.split()[1].strip("'"))
+                names.add(_tmdl_identifier(s[len("column "):]))
             elif s.startswith("measure "):
-                name = s[len("measure ") :].split("=")[0].strip().strip("'")
+                name = s[len("measure "):].split("=")[0].strip().strip("'")
                 names.add(name)
             elif s.startswith("table "):
-                table = s.split()[1].strip("'")
+                table = _tmdl_identifier(s[len("table "):])
         index[table] = names
     return index
 

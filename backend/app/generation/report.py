@@ -99,21 +99,35 @@ def _load(name: str) -> str:
     return (_PROMPTS / name).read_text(encoding="utf-8")
 
 
+def _tmdl_identifier(rest: str) -> str:
+    """Parse a TMDL name that may be single-quoted (e.g. 'Stock Data' or Sales)."""
+    rest = rest.strip()
+    if rest.startswith("'"):
+        end = rest.find("'", 1)
+        return rest[1:end] if end > 0 else rest.strip("'")
+    return rest.split()[0] if rest else rest
+
+
 def semantic_model_summary(model: SemanticModelArtifacts) -> str:
-    """A condensed listing of tables + measures the model may reference in visuals."""
+    """A condensed listing of tables + measures the model may reference in visuals.
+
+    Uses content-declared names (same as the cross-reference validator) so the names
+    we give the PBIR generator exactly match what validation will check against.
+    """
     parts: list[str] = []
     for fname, content in model.tables.items():
         table = fname.replace(".tmdl", "")
-        cols = [
-            line.strip().split()[1]
-            for line in content.splitlines()
-            if line.strip().startswith("column ")
-        ]
-        measures = [
-            line.strip().split("=")[0].replace("measure", "").strip().strip("'")
-            for line in content.splitlines()
-            if line.strip().startswith("measure ")
-        ]
+        cols: list[str] = []
+        measures: list[str] = []
+        for line in content.splitlines():
+            s = line.strip()
+            if s.startswith("table "):
+                table = _tmdl_identifier(s[len("table "):])
+            elif s.startswith("column "):
+                cols.append(_tmdl_identifier(s[len("column "):]))
+            elif s.startswith("measure "):
+                m = s[len("measure "):].split("=")[0].strip().strip("'")
+                measures.append(m)
         parts.append(f"TABLE {table}")
         if cols:
             parts.append("  columns: " + ", ".join(cols))

@@ -1,10 +1,9 @@
-"""PBIR generation: JSON-mode call + visual_json normalization.
+"""PBIR generation: JSON-mode call, visual_json normalization, and cross-ref parsing.
 
-Regression guard for the bug where the recommended model (Gemini, with
-`supports_structured_output: true`) produced visuals with an empty `visual_json` —
-no `visual.visualType`, no field bindings — because the PBIR envelope schema declared
-`visual_json` as a free-form `{"type": "object"}` and Gemini's structured output returns
-free-form objects empty. The fix generates PBIR in JSON mode and normalizes the result.
+Regression guard for two bugs:
+1. Gemini structured output returned empty visual_json (no visualType, no bindings).
+2. _semantic_index/semantic_model_summary failed to parse quoted TMDL table names
+   with spaces (e.g. `table 'Stock Data'`), causing "References unknown table" errors.
 """
 
 from __future__ import annotations
@@ -118,3 +117,60 @@ def test_parse_artifacts_normalizes_every_visual():
     assert visuals[1]["visual_json"]["visual"]["visualType"] == "slicer"
     for v in visuals:
         assert v["visual_json"]["$schema"] == _VC
+
+
+# ── Cross-reference / quoted table name tests ────────────────────────────────
+
+def test_semantic_summary_uses_content_declared_name_for_spaced_table():
+    """semantic_model_summary must use the content-declared name, not the filename key.
+
+    When the LLM produces `table 'Stock Data'` inside the TMDL but keys the dict as
+    `Stock Data.tmdl`, the summary must emit TABLE Stock Data so the PBIR generator
+    uses the right Entity name — matching what the cross-reference validator checks.
+    """
+    model = SemanticModelArtifacts(
+        model_tmdl="model M\n",
+        tables={"Stock Data.tmdl": "table 'Stock Data'\n\tcolumn Close\n\t\tdataType: decimal\n"},
+    )
+    summary = report_gen.semantic_model_summary(model)
+    assert "TABLE Stock Data" in summary
+    assert "TABLE Stock" not in summary.replace("TABLE Stock Data", "")
+
+
+def test_cross_ref_passes_for_quoted_table_with_spaces(tmp_path):
+    """validate_report must not flag a reference to 'Stock Data' as unknown.
+
+    Regression for the bug where `s.split()[1].strip("'")` only captured 'Stock'
+    from `table 'Stock Data'`, so every visual binding to Stock Data was rejected.
+    """
+    from app.schemas.generation import ReportArtifacts
+    from app.validation.pbir_validator import validate_report
+
+    tmdl = (
+        "table 'Stock Data'\n"
+        "\tcolumn Close\n\t\tdataType: decimal\n\t\tsourceColumn: Close\n"
+        "\tmeasure 'Avg Close' = AVERAGE('Stock Data'[Close])\n"
+    )
+    model = SemanticModelArtifacts(
+        model_tmdl="model M\n",
+        tables={"Stock Data.tmdl": tmdl},
+    )
+    report = ReportArtifacts(
+        report_json={"$schema": "report"},
+        pages=[{"page_id": "P1", "page_json": {"name": "P1"}, "visuals": [{
+            "visual_id": "v1",
+            "visual_json": {
+                "$schema": _VC, "name": "v1",
+                "visual": {"visualType": "card", "query": {"queryState": {
+                    "Values": {"projections": [{"field": {
+                        "Measure": {
+                            "Expression": {"SourceRef": {"Entity": "Stock Data"}},
+                            "Property": "Avg Close",
+                        }
+                    }}]}
+                }}},
+            },
+        }]}],
+    )
+    result = validate_report(report, model)
+    assert result.valid, [e.message for e in result.errors]
