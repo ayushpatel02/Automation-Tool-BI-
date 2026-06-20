@@ -130,12 +130,38 @@ def _normalize_tmdl_mode(tmdl: str) -> str:
     )
 
 
+# `defaultPowerBIDataSourceVersion` is a TMDL enum (powerBI_V1/V2/V3), not a number. LLMs
+# often emit `3.0`, producing "Failed to convert the value '3.0' to the expected type
+# PowerBIDataSourceVersion" on PBI Desktop load. Map numeric values to the enum.
+_TMDL_DSV_RE = re.compile(
+    r"^(\s*defaultPowerBIDataSourceVersion\s*:\s*)(\S+)(\s*)$",
+    re.MULTILINE,
+)
+_DSV_MAP = {
+    "3.0": "powerBI_V3", "3": "powerBI_V3",
+    "2.0": "powerBI_V2", "2": "powerBI_V2",
+    "1.0": "powerBI_V1", "1": "powerBI_V1",
+}
+
+
+def _normalize_datasource_version(tmdl: str) -> str:
+    """Map a numeric defaultPowerBIDataSourceVersion (3.0) to its TMDL enum (powerBI_V3)."""
+    def repl(m: re.Match) -> str:
+        val = m.group(2).strip().strip('"')
+        if val.startswith("powerBI_V"):
+            return m.group(0)  # already a valid enum
+        return m.group(1) + _DSV_MAP.get(val, "powerBI_V3") + m.group(3)
+
+    return _TMDL_DSV_RE.sub(repl, tmdl)
+
+
 def _sanitize_tmdl(tmdl: str) -> str:
     """Fix the common LLM TMDL/M mistakes that break Power BI Desktop on load."""
     tmdl = _normalize_tmdl_indentation(tmdl)
     tmdl = _normalize_tmdl_booleans(tmdl)
     tmdl = _normalize_m_types(tmdl)
     tmdl = _normalize_tmdl_mode(tmdl)
+    tmdl = _normalize_datasource_version(tmdl)
     return tmdl
 
 

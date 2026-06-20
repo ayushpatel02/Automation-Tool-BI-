@@ -30,6 +30,7 @@ _VALID_MODES = {"import", "directQuery", "dualMode", "push", "streaming"}
 
 _YAML_BOOL_RE = re.compile(r"^\s*[\w][\w.]*\s*:\s*(off|on|no|yes)\s*$", re.IGNORECASE)
 _MODE_RE = re.compile(r"^\s*mode\s*:\s*(\S+)\s*$")
+_DSV_RE = re.compile(r"^\s*defaultPowerBIDataSourceVersion\s*:\s*(\S+)\s*$")
 _M_TYPE_RE = re.compile(
     r"\btype\s+(string|int64|double|decimal|dateTime|boolean|binary)\b", re.IGNORECASE
 )
@@ -113,6 +114,19 @@ def _lint_tmdl_text(label: str, content: str, *, is_table: bool) -> list[Preflig
                 "tmdl.mode",
                 f"Line {i + 1}: partition mode {m.group(1)!r} has wrong casing; "
                 f"expected one of {sorted(_VALID_MODES)}.",
+                fix="auto",
+            )
+
+    # 3b. defaultPowerBIDataSourceVersion must be a TMDL enum (powerBI_V3), not a number.
+    for i, line in enumerate(lines):
+        if mask[i]:
+            continue
+        m = _DSV_RE.match(line)
+        if m and not m.group(1).startswith("powerBI_V"):
+            add(
+                "tmdl.datasource_version",
+                f"Line {i + 1}: defaultPowerBIDataSourceVersion {m.group(1)!r} is invalid; "
+                f"TMDL expects an enum such as powerBI_V3, not a number.",
                 fix="auto",
             )
 

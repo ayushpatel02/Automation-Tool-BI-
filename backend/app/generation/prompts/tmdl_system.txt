@@ -27,6 +27,9 @@ RULES:
   Never use 2-space or 4-space indentation — TMDL will reject it.
 - Partition mode values are strictly lowercase/camelCase: `import`, `directQuery`,
   `dualMode`. Never write `Import`, `DirectQuery`, or `DualMode`.
+- The model header's `defaultPowerBIDataSourceVersion` MUST be the enum `powerBI_V3` —
+  never a number like `3.0`. The model.tmdl header is exactly:
+  `model Model` / `culture: en-US` / `defaultPowerBIDataSourceVersion: powerBI_V3`.
 
 TMDL SYNTAX EXAMPLE:
 table Sales

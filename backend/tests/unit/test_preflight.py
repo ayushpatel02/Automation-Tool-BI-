@@ -37,6 +37,18 @@ def test_lint_model_flags_space_indentation_and_yaml_bool_and_mode():
     assert "tmdl.mode" in cats
 
 
+def test_lint_model_flags_numeric_datasource_version():
+    """defaultPowerBIDataSourceVersion: 3.0 must be flagged as an auto-fixable error."""
+    model = SemanticModelArtifacts(
+        model_tmdl="model Model\n\tdefaultPowerBIDataSourceVersion: 3.0\n",
+        tables={"Sales.tmdl": "table Sales\n\tpartition Sales = m\n\t\tsource = let x = 1 in x\n"},
+    )
+    findings = lint_model(model)
+    dsv = [f for f in findings if f.category == "tmdl.datasource_version"]
+    assert dsv, _categories(findings)
+    assert dsv[0].fix == "auto"
+
+
 def test_lint_model_flags_invalid_m_type_and_datatype():
     table = (
         "table T\n"

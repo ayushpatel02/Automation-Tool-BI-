@@ -3,6 +3,7 @@
 import pytest
 
 from app.generation.semantic_model import (
+    _normalize_datasource_version,
     _normalize_m_types,
     _normalize_tmdl_booleans,
     _normalize_tmdl_indentation,
@@ -140,6 +141,23 @@ def test_normalize_tmdl_mode_fixes_title_case():
     assert "Import" not in result
     assert "DirectQuery" not in result
     assert "DualMode" not in result
+
+
+def test_normalize_datasource_version_maps_number_to_enum():
+    """defaultPowerBIDataSourceVersion: 3.0 must become the TMDL enum powerBI_V3."""
+    tmdl = (
+        "model Model\n"
+        "\tculture: en-US\n"
+        "\tdefaultPowerBIDataSourceVersion: 3.0\n"
+    )
+    result = _normalize_datasource_version(tmdl)
+    assert "\tdefaultPowerBIDataSourceVersion: powerBI_V3\n" in result
+    assert "3.0" not in result
+
+
+def test_normalize_datasource_version_leaves_valid_enum_untouched():
+    tmdl = "model Model\n\tdefaultPowerBIDataSourceVersion: powerBI_V3\n"
+    assert _normalize_datasource_version(tmdl) == tmdl
 
 
 def test_normalize_m_types_leaves_tmdl_datatype_and_valid_m_untouched():
