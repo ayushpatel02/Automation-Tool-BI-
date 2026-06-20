@@ -193,8 +193,8 @@ async def _llm_repair_report(
 
     base = report_gen.build_messages(model, request)
     messages = report_gen.build_repair_messages(base, report.model_dump(), errors)
-    schema = report_gen.PBIR_RESPONSE_SCHEMA if llm.config.get("supports_structured_output") else None
-    raw = await llm.complete_json(messages, json_schema=schema)
+    # JSON mode, not structured output — see report.generate_report for why.
+    raw = await llm.complete_json(messages)
     return report_gen.parse_artifacts(raw)
 
 

@@ -28,8 +28,30 @@ OUTPUT FORMAT — return ONLY valid JSON in exactly this shape, nothing else:
       "page_id": "<unique id>",
       "page_json": { "name": "<id>", "displayName": "Page 1", "width": 1280, "height": 720 },
       "visuals": [
-        { "visual_id": "<uuid>", "visual_json": { ...visualContainer contents... } }
+        {
+          "visual_id": "<uuid>",
+          "visual_json": {
+            "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.0.0/schema.json",
+            "name": "<uuid>",
+            "position": { "x": 20, "y": 60, "z": 0, "width": 580, "height": 340, "tabOrder": 1 },
+            "visual": {
+              "visualType": "<one of the allowed visual types>",
+              "query": { "queryState": { ...field projections grouped by role... } }
+            }
+          }
+        }
       ]
     }
   ]
 }
+
+CRITICAL — every "visual_json" MUST be fully populated:
+- It MUST contain a nested "visual" object.
+- That "visual" object MUST have a "visualType" (one of the allowed types above).
+- That "visual" object MUST have "query.queryState" binding real columns/measures from the
+  SEMANTIC MODEL, exactly like the example. A slicer binds one column; a card/multiRowCard
+  binds measures; charts bind a category column plus one or more measures; a table binds the
+  columns/measures to show.
+- Do NOT emit an empty visual_json, and do NOT put visualType or query at the top level —
+  they go INSIDE "visual". A visual with no visualType or no bound fields is invalid and the
+  report will be rejected.

@@ -177,12 +177,8 @@ async def _regen_model(llm: LLMRouter, messages: list[dict]):
 
 
 async def _regen_report(llm: LLMRouter, messages: list[dict]):
-    schema = (
-        report_gen.PBIR_RESPONSE_SCHEMA
-        if llm.config.get("supports_structured_output")
-        else None
-    )
-    raw = await llm.complete_json(messages, json_schema=schema)
+    # JSON mode, not structured output — see report.generate_report for why.
+    raw = await llm.complete_json(messages)
     return report_gen.parse_artifacts(raw), raw
 
 

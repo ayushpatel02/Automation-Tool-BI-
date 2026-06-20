@@ -10,7 +10,16 @@ from app.schemas.generation import ReportArtifacts, SemanticModelArtifacts
 
 _PROMPTS = Path(__file__).parent / "prompts"
 
-# PBIR response envelope schema passed to the model for structured output.
+_VISUAL_CONTAINER_SCHEMA = (
+    "https://developer.microsoft.com/json-schemas/fabric/item/report/"
+    "definition/visualContainer/2.0.0/schema.json"
+)
+
+# PBIR response envelope schema. NOTE: this is intentionally NOT used for structured-output
+# mode. `visual_json`/`page_json`/`report_json` are free-form, deeply-nested objects, and
+# Gemini's structured output (responseSchema) returns free-form objects EMPTY — which made
+# every generated visual come back with no visualType and no field bindings. PBIR is
+# generated in plain JSON mode instead (see `generate_report`). Kept for documentation.
 PBIR_RESPONSE_SCHEMA: dict = {
     "type": "object",
     "properties": {
@@ -136,10 +145,52 @@ def build_repair_messages(
     return base_messages + [{"role": "user", "content": repair}]
 
 
+def _normalize_visual(vjson: dict) -> dict:
+    """Repair common shape variations so a visual carries `visual.visualType` + a query.
+
+    Even in JSON mode an LLM sometimes places ``visualType`` or ``query``/``queryState`` at
+    the top level of the visual instead of inside the nested ``visual`` object, or omits the
+    ``$schema``. Power BI Desktop silently drops a visual with no ``visual.visualType``, so we
+    move these into place and inject a default ``$schema`` rather than ship a broken visual.
+    """
+    if not isinstance(vjson, dict):
+        return vjson
+
+    visual = vjson.get("visual")
+    if not isinstance(visual, dict):
+        visual = {}
+
+    # visualType sometimes lands at the top level instead of under `visual`.
+    if not visual.get("visualType"):
+        for key in ("visualType", "type"):
+            if vjson.get(key):
+                visual["visualType"] = vjson.pop(key)
+                break
+
+    # query / queryState sometimes land at the top level too.
+    if "query" not in visual:
+        if isinstance(vjson.get("query"), dict):
+            visual["query"] = vjson.pop("query")
+        elif isinstance(vjson.get("queryState"), dict):
+            visual["query"] = {"queryState": vjson.pop("queryState")}
+
+    if visual:
+        vjson["visual"] = visual
+    vjson.setdefault("$schema", _VISUAL_CONTAINER_SCHEMA)
+    return vjson
+
+
 def parse_artifacts(raw: dict) -> ReportArtifacts:
+    pages = raw.get("pages", []) or []
+    for page in pages:
+        if not isinstance(page, dict):
+            continue
+        for v in page.get("visuals", []) or []:
+            if isinstance(v, dict) and isinstance(v.get("visual_json"), dict):
+                v["visual_json"] = _normalize_visual(v["visual_json"])
     return ReportArtifacts(
         report_json=raw.get("report_json", {}),
-        pages=raw.get("pages", []),
+        pages=pages,
     )
 
 
@@ -147,6 +198,8 @@ async def generate_report(
     llm: LLMRouter, model: SemanticModelArtifacts, user_request: str
 ) -> tuple[ReportArtifacts, dict, list[dict]]:
     messages = build_messages(model, user_request)
-    schema = PBIR_RESPONSE_SCHEMA if llm.config.get("supports_structured_output") else None
-    raw = await llm.complete_json(messages, json_schema=schema)
+    # PBIR is generated in JSON mode (NOT structured output): visual_json is free-form and
+    # Gemini's responseSchema returns free-form objects empty. The prompt + example carry the
+    # shape, and parse_artifacts() repairs common deviations.
+    raw = await llm.complete_json(messages)
     return parse_artifacts(raw), raw, messages
