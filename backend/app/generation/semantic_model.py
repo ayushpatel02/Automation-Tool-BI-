@@ -180,78 +180,115 @@ def sanitize_model(model: SemanticModelArtifacts) -> SemanticModelArtifacts:
 
 
 # --- File-source patching (CSV / Excel) ---------------------------------------
-# CSV/Excel connectors reference files by an absolute server path that doesn't
-# exist on the user's machine when they open the .pbip in Power BI Desktop.
-# patch_file_sources() fixes this after all generation/repair cycles are done:
-#   - files ≤ 5 MB  → embed as Base64 inside the M expression (self-contained)
-#   - files  > 5 MB → keep the display filename, return it for zip bundling
+# CSV/Excel partitions are generated with `File.Contents("<name>")`. Power Query's
+# File.Contents REQUIRES an absolute path — a bare filename fails at load with
+# "The supplied file path must be a valid absolute path", and any absolute server
+# path we used would not exist on the user's machine. The only portable fix is to
+# embed the file's bytes directly in the M expression via Binary.FromText, so the
+# .pbip is fully self-contained and loads with zero setup. patch_file_sources()
+# does this once, after all generation/repair cycles are done (so the Base64 blob
+# never bloats a repair-prompt's context).
+#
+#   - files ≤ 90 MB → embed as Base64 (self-contained; the normal path)
+#   - files > 90 MB → too large to embed; bundle the file in the zip and rewrite
+#                     the reference to an absolute placeholder the user edits once
 
-_FILE_CONTENTS_RE = re.compile(r'\bFile\.Contents\("([^"]+)"\)')
-_EMBED_LIMIT_BYTES = 5 * 1024 * 1024  # 5 MB
+_FILE_CONTENTS_RE = re.compile(r'\bFile\.Contents\("([^"]*)"\)')
+# Embed essentially any uploadable file (the upload cap is 100 MB). Embedding runs
+# post-repair, so there is no prompt-context cost to a large blob.
+_EMBED_LIMIT_BYTES = 90 * 1024 * 1024  # 90 MB
+# Placeholder absolute path for the rare file too large to embed. It is absolute
+# (so it does not trigger the "must be a valid absolute path" error) and obvious.
+_PLACEHOLDER_DIR = "C:\\PowerBI-Data\\"
+
+
+def _file_sources(profile: SchemaProfile) -> list[SourceInfo]:
+    """Every CSV/Excel source on the profile that carries a usable file path."""
+    return [
+        s
+        for s in _profile_sources(profile)
+        if s.type in (ConnectorType.CSV, ConnectorType.EXCEL) and s.extra.get("file_path")
+    ]
+
+
+def _source_display(src: SourceInfo) -> str:
+    return src.extra.get("original_name") or Path(src.extra["file_path"]).name
+
+
+def _resolve_file(ref: str, file_map: dict[str, str], sole_path: str | None) -> str | None:
+    """Map a File.Contents("<ref>") argument to a server file path, as robustly as possible.
+
+    The LLM may put the display name, a basename, a stem, or even garbage inside
+    File.Contents(...). When there is exactly one file source, any File.Contents call
+    must refer to it — so we fall back to that path unconditionally.
+    """
+    if ref in file_map:
+        return file_map[ref]
+    base = ref.replace("\\", "/").split("/")[-1]
+    if base in file_map:
+        return file_map[base]
+    for disp, path in file_map.items():
+        if base == disp or base.endswith(disp) or disp.endswith(base):
+            return path
+        if Path(base).stem.lower() == Path(disp).stem.lower():
+            return path
+    # Single file source: any File.Contents must be it, whatever string was written.
+    return sole_path
 
 
 def patch_file_sources(
     artifacts: SemanticModelArtifacts,
     profile: SchemaProfile,
 ) -> tuple[SemanticModelArtifacts, dict[str, str]]:
-    """Embed small CSV/Excel files as Base64 in M; mark larger ones for zip bundling.
+    """Embed CSV/Excel files as Base64 in M so the .pbip loads without an external path.
 
     Returns ``(patched_artifacts, data_files)`` where *data_files* maps
-    ``display_name → server_path`` for files that were NOT embedded (too large) and
-    must be copied into the download zip so the user can redirect the data source.
+    ``display_name → server_path`` for any file too large to embed; those are copied
+    into the download zip and the M reference is rewritten to an absolute placeholder.
 
     Call this once, just before creating the final zip — never during the repair loop,
-    since embedded Base64 would balloon the repair-prompt context.
+    since an embedded Base64 blob would balloon the repair-prompt context.
     """
-    # Build display_name → server_path map for every file-based source.
-    file_map: dict[str, str] = {}
-    for src in _profile_sources(profile):
-        if src.type in (ConnectorType.CSV, ConnectorType.EXCEL):
-            fp = src.extra.get("file_path")
-            if fp:
-                display = src.extra.get("original_name") or Path(fp).name
-                file_map[display] = fp
-
-    if not file_map:
+    sources = _file_sources(profile)
+    if not sources:
         return artifacts, {}
+
+    file_map = {_source_display(s): s.extra["file_path"] for s in sources}
+    # The dominant case is a single uploaded file → a single table.
+    sole_path = sources[0].extra["file_path"] if len(sources) == 1 else None
+    path_to_display = {v: k for k, v in file_map.items()}
 
     data_files: dict[str, str] = {}
     new_tables: dict[str, str] = {}
 
     for fname, content in artifacts.tables.items():
         if "Binary.FromText(" in content:
-            # Already patched (idempotency guard).
+            # Already embedded (idempotency guard for re-tests / refinement re-runs).
             new_tables[fname] = content
             continue
 
         new_content = content
-        # Iterate in reverse so string-replacement offsets stay valid.
+        # Iterate in reverse so earlier match offsets stay valid after replacement.
         for m in reversed(list(_FILE_CONTENTS_RE.finditer(content))):
             ref = m.group(1)
-            server_path = file_map.get(ref)
-            if server_path is None:
-                # Fallback: LLM may have used a suffix of the display name.
-                for disp, sp in file_map.items():
-                    if ref.endswith(disp) or disp.endswith(ref):
-                        server_path = sp
-                        ref = disp
-                        break
-            if server_path is None:
+            server_path = _resolve_file(ref, file_map, sole_path)
+            if not server_path:
                 continue
-
             server_file = Path(server_path)
             if not server_file.exists():
                 continue
+            display = path_to_display.get(server_path, server_file.name)
 
             if server_file.stat().st_size <= _EMBED_LIMIT_BYTES:
                 b64 = base64.b64encode(server_file.read_bytes()).decode()
                 replacement = f'Binary.FromText("{b64}", BinaryEncoding.Base64)'
             else:
-                # File too large to embed; mark for bundling in the zip.
-                data_files[ref] = server_path
-                replacement = m.group(0)  # keep File.Contents("name.csv") as-is
+                # Too large to embed: bundle the file and point at an ABSOLUTE
+                # placeholder so Power BI doesn't reject it as a relative path.
+                data_files[display] = server_path
+                replacement = f'File.Contents("{_PLACEHOLDER_DIR}{display}")'
 
-            new_content = new_content[:m.start()] + replacement + new_content[m.end():]
+            new_content = new_content[: m.start()] + replacement + new_content[m.end() :]
         new_tables[fname] = new_content
 
     return artifacts.model_copy(update={"tables": new_tables}), data_files

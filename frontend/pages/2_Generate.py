@@ -268,11 +268,12 @@ if session_id:
                 _file_types = {"csv", "excel"}
                 if any(c.get("type") in _file_types for c in connectors):
                     st.info(
-                        "**Data file included in zip.** Small files (≤ 5 MB) are embedded "
-                        "directly in the model — open the .pbip and data loads immediately. "
-                        "For larger files the data file is bundled alongside the .pbip; if "
-                        "Power BI Desktop can't find it, go to **Transform Data → Data source "
-                        "settings** and point it to the file in the extracted folder.",
+                        "**Your data is embedded in the model.** The uploaded file's "
+                        "contents are baked directly into the .pbip, so it opens in Power BI "
+                        "Desktop and loads immediately — no file paths to fix. (For very "
+                        "large files the data file is bundled in the zip instead; if Power BI "
+                        "can't find it, open **Transform Data → Data source settings** and "
+                        "point it at the file in the extracted folder.)",
                         icon="📎",
                     )
                 st.caption("Then continue to the **Refine** page to edit it with AI chat.")
