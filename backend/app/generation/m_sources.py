@@ -7,6 +7,8 @@ template is injected into the TMDL generation prompt and the model fills table n
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from app.schemas.connector import ConnectorType, SourceInfo
 
 # {server}/{database}/{schema}/{table} are filled by the model per table.
@@ -80,7 +82,14 @@ def m_source_hint(connector_type: ConnectorType, source: SourceInfo | None = Non
             values["database"] = source.database
         if source.schema_name:
             values["schema"] = source.schema_name
-        for key in ("warehouse", "http_path", "file_path"):
+        for key in ("warehouse", "http_path"):
             if source.extra.get(key):
                 values[key] = source.extra[key]
+        # For file connectors use only the display name (original_name if available,
+        # otherwise just the basename of the server path).  The full server path is
+        # an absolute path on the backend that won't exist on the user's machine;
+        # patch_file_sources() later embeds small files as base64 or bundles them.
+        if source.extra.get("file_path"):
+            fp = source.extra["file_path"]
+            values["file_path"] = source.extra.get("original_name") or Path(fp).name
     return template.format(**values)

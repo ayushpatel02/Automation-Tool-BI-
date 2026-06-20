@@ -114,12 +114,20 @@ def _write_report(project_name: str, report: ReportArtifacts, root: Path) -> Non
     )
 
 
-def zip_pbip(project_root: Path, project_name: str) -> Path:
+def zip_pbip(
+    project_root: Path,
+    project_name: str,
+    data_files: dict[str, str] | None = None,
+) -> Path:
     """Zip the .pbip project (folder + entry file) for download.
 
     The zip layout matches Power BI Desktop's native format: the .pbip entry file,
     .SemanticModel/, and .Report/ all sit at the top level — no intermediate
     {project_name}/ wrapper folder.
+
+    *data_files* maps ``display_name → server_path`` for CSV/Excel source files that
+    are too large to embed as Base64 and must be bundled alongside the .pbip so the
+    user can redirect the data source in Power BI Desktop.
     """
     parent = project_root.parent
     archive_base = parent / f"{project_name}"
@@ -138,6 +146,12 @@ def zip_pbip(project_root: Path, project_name: str) -> Path:
     entry = parent / f"{project_name}.pbip"
     if entry.exists():
         shutil.copy(entry, staging / f"{project_name}.pbip")
+    # Bundle large data files that couldn't be embedded as Base64.
+    if data_files:
+        for display_name, server_path in data_files.items():
+            src = Path(server_path)
+            if src.exists():
+                shutil.copy2(src, staging / display_name)
     zip_path = shutil.make_archive(str(archive_base), "zip", staging)
     shutil.rmtree(staging, ignore_errors=True)
     return Path(zip_path)

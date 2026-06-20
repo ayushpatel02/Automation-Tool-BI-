@@ -109,10 +109,12 @@ async def refine_report(
     outcome.report_validation = report_val
 
     from app.assembler import assemble_pbip, zip_pbip
+    from app.generation.semantic_model import patch_file_sources
 
-    project_root = assemble_pbip(project_name, model_art, new_report, output_dir)
+    patched_model, data_files = patch_file_sources(model_art, profile)
+    project_root = assemble_pbip(project_name, patched_model, new_report, output_dir)
     outcome.project_root = project_root
-    outcome.zip_path = zip_pbip(project_root, project_name)
+    outcome.zip_path = zip_pbip(project_root, project_name, data_files=data_files or None)
     outcome.success = report_val.valid
     await emit({"stage": "assemble", "status": "ok", "success": outcome.success})
     return outcome

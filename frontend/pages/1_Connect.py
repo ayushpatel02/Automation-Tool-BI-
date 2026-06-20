@@ -58,6 +58,7 @@ if ctype in ("csv", "excel"):
             kb = meta["size_bytes"] / 1024
             st.success(f"Uploaded **{meta['original_name']}** ({kb:.1f} KB)")
             config["extra"]["file_path"] = meta["file_path"]
+            config["extra"]["original_name"] = meta["original_name"]
             if not name.strip() or name == f"My {label}":
                 config["name"] = Path(meta["original_name"]).stem
 else:

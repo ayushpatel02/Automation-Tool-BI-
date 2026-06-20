@@ -275,7 +275,17 @@ async def self_test_and_repair(
     )
     final.attempts = attempt
     final.auto_fixed = auto_fixed
-    zip_path = zip_pbip(project_root, project_name)
+
+    # Patch CSV/Excel sources: embed small files as Base64 (self-contained), bundle
+    # large ones alongside the .pbip.  Done here — after all repair cycles — so the
+    # Base64 blob never inflates the repair-prompt context.
+    from app.generation.semantic_model import patch_file_sources
+    patched_model, data_files = patch_file_sources(model, profile)
+    if patched_model.tables != model.tables:
+        # Re-assemble so the on-disk TMDL files carry the embedded Base64.
+        project_root = assemble_pbip(project_name, patched_model, report, output_dir)
+
+    zip_path = zip_pbip(project_root, project_name, data_files=data_files or None)
     return SelfTestResult(
         model=model, report=report, project_root=project_root,
         zip_path=zip_path, report_card=final,

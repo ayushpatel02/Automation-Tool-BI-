@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import re
 from pathlib import Path
@@ -176,6 +177,84 @@ def sanitize_model(model: SemanticModelArtifacts) -> SemanticModelArtifacts:
         relationships_tmdl=_sanitize_tmdl(model.relationships_tmdl),
         expressions_tmdl=_sanitize_tmdl(model.expressions_tmdl),
     )
+
+
+# --- File-source patching (CSV / Excel) ---------------------------------------
+# CSV/Excel connectors reference files by an absolute server path that doesn't
+# exist on the user's machine when they open the .pbip in Power BI Desktop.
+# patch_file_sources() fixes this after all generation/repair cycles are done:
+#   - files ≤ 5 MB  → embed as Base64 inside the M expression (self-contained)
+#   - files  > 5 MB → keep the display filename, return it for zip bundling
+
+_FILE_CONTENTS_RE = re.compile(r'\bFile\.Contents\("([^"]+)"\)')
+_EMBED_LIMIT_BYTES = 5 * 1024 * 1024  # 5 MB
+
+
+def patch_file_sources(
+    artifacts: SemanticModelArtifacts,
+    profile: SchemaProfile,
+) -> tuple[SemanticModelArtifacts, dict[str, str]]:
+    """Embed small CSV/Excel files as Base64 in M; mark larger ones for zip bundling.
+
+    Returns ``(patched_artifacts, data_files)`` where *data_files* maps
+    ``display_name → server_path`` for files that were NOT embedded (too large) and
+    must be copied into the download zip so the user can redirect the data source.
+
+    Call this once, just before creating the final zip — never during the repair loop,
+    since embedded Base64 would balloon the repair-prompt context.
+    """
+    # Build display_name → server_path map for every file-based source.
+    file_map: dict[str, str] = {}
+    for src in _profile_sources(profile):
+        if src.type in (ConnectorType.CSV, ConnectorType.EXCEL):
+            fp = src.extra.get("file_path")
+            if fp:
+                display = src.extra.get("original_name") or Path(fp).name
+                file_map[display] = fp
+
+    if not file_map:
+        return artifacts, {}
+
+    data_files: dict[str, str] = {}
+    new_tables: dict[str, str] = {}
+
+    for fname, content in artifacts.tables.items():
+        if "Binary.FromText(" in content:
+            # Already patched (idempotency guard).
+            new_tables[fname] = content
+            continue
+
+        new_content = content
+        # Iterate in reverse so string-replacement offsets stay valid.
+        for m in reversed(list(_FILE_CONTENTS_RE.finditer(content))):
+            ref = m.group(1)
+            server_path = file_map.get(ref)
+            if server_path is None:
+                # Fallback: LLM may have used a suffix of the display name.
+                for disp, sp in file_map.items():
+                    if ref.endswith(disp) or disp.endswith(ref):
+                        server_path = sp
+                        ref = disp
+                        break
+            if server_path is None:
+                continue
+
+            server_file = Path(server_path)
+            if not server_file.exists():
+                continue
+
+            if server_file.stat().st_size <= _EMBED_LIMIT_BYTES:
+                b64 = base64.b64encode(server_file.read_bytes()).decode()
+                replacement = f'Binary.FromText("{b64}", BinaryEncoding.Base64)'
+            else:
+                # File too large to embed; mark for bundling in the zip.
+                data_files[ref] = server_path
+                replacement = m.group(0)  # keep File.Contents("name.csv") as-is
+
+            new_content = new_content[:m.start()] + replacement + new_content[m.end():]
+        new_tables[fname] = new_content
+
+    return artifacts.model_copy(update={"tables": new_tables}), data_files
 
 
 def _load(name: str) -> str:

@@ -155,9 +155,11 @@ async def run_generation(
     # --- Assemble (self-test disabled): still give the user something ---
     await emit({"stage": "assemble", "status": "start"})
     from app.assembler import assemble_pbip, zip_pbip
+    from app.generation.semantic_model import patch_file_sources
 
-    project_root = assemble_pbip(project_name, model_art, report_art, output_dir)
-    zip_path = zip_pbip(project_root, project_name)
+    patched_model, data_files = patch_file_sources(model_art, profile)
+    project_root = assemble_pbip(project_name, patched_model, report_art, output_dir)
+    zip_path = zip_pbip(project_root, project_name, data_files=data_files or None)
     outcome.project_root = project_root
     outcome.zip_path = zip_path
     outcome.success = report_val.valid

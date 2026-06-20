@@ -264,6 +264,17 @@ if session_id:
                     file_name=f"{project_name}.zip",
                     mime="application/zip",
                 )
+                # Show data-file note for CSV/Excel sources.
+                _file_types = {"csv", "excel"}
+                if any(c.get("type") in _file_types for c in connectors):
+                    st.info(
+                        "**Data file included in zip.** Small files (≤ 5 MB) are embedded "
+                        "directly in the model — open the .pbip and data loads immediately. "
+                        "For larger files the data file is bundled alongside the .pbip; if "
+                        "Power BI Desktop can't find it, go to **Transform Data → Data source "
+                        "settings** and point it to the file in the extracted folder.",
+                        icon="📎",
+                    )
                 st.caption("Then continue to the **Refine** page to edit it with AI chat.")
             except ApiError as exc:
                 st.error(str(exc))
