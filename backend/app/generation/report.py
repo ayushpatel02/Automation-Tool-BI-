@@ -50,6 +50,21 @@ PBIR_RESPONSE_SCHEMA: dict = {
     "required": ["report_json", "pages"],
 }
 
+def _column_projection(entity: str, prop: str, active: bool = False) -> dict:
+    p = {
+        "field": {
+            "Column": {
+                "Expression": {"SourceRef": {"Entity": entity}},
+                "Property": prop,
+            }
+        },
+        "queryRef": f"{entity}.{prop}",
+    }
+    if active:
+        p["active"] = True
+    return p
+
+
 _VISUAL_EXAMPLE = json.dumps(
     {
         "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.0.0/schema.json",
@@ -60,18 +75,7 @@ _VISUAL_EXAMPLE = json.dumps(
             "query": {
                 "queryState": {
                     "Category": {
-                        "projections": [
-                            {
-                                "field": {
-                                    "Column": {
-                                        "Expression": {"SourceRef": {"Entity": "Products"}},
-                                        "Property": "Category",
-                                    }
-                                },
-                                "queryRef": "Products.Category",
-                                "active": True,
-                            }
-                        ]
+                        "projections": [_column_projection("Products", "Category", active=True)]
                     },
                     "Y": {
                         "projections": [
@@ -87,6 +91,32 @@ _VISUAL_EXAMPLE = json.dumps(
                             }
                         ]
                     },
+                }
+            },
+        },
+    },
+    indent=2,
+)
+
+# A plain table ("tableEx") listing several raw columns. The columns all go under the
+# single "Values" role, in order. This is the shape to use when the user asks for "a table
+# listing X, Y, Z" — without this example the model tends to emit only charts.
+_TABLE_EXAMPLE = json.dumps(
+    {
+        "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.0.0/schema.json",
+        "name": "550e8400-e29b-41d4-a716-446655440002",
+        "position": {"x": 20, "y": 60, "z": 0, "width": 1240, "height": 360, "tabOrder": 1},
+        "visual": {
+            "visualType": "tableEx",
+            "query": {
+                "queryState": {
+                    "Values": {
+                        "projections": [
+                            _column_projection("Stock", "Date", active=True),
+                            _column_projection("Stock", "Close"),
+                            _column_projection("Stock", "Volume"),
+                        ]
+                    }
                 }
             },
         },
@@ -141,6 +171,7 @@ def build_messages(model: SemanticModelArtifacts, user_request: str) -> list[dic
         _load("pbir_system.txt")
         .replace("{semantic_model_summary}", semantic_model_summary(model))
         .replace("{visual_example}", _VISUAL_EXAMPLE)
+        .replace("{table_example}", _TABLE_EXAMPLE)
     )
     user = f"REPORT REQUEST:\n{user_request}\n\nGenerate the PBIR report now."
     return [

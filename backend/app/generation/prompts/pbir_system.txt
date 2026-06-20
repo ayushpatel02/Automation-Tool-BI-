@@ -8,6 +8,9 @@ RULES:
   {"Column": {"Expression": {"SourceRef": {"Entity": "TableName"}}, "Property": "ColumnName"}}
 - Allowed visual types: barChart, lineChart, clusteredColumnChart, pieChart, donutChart,
   tableEx, pivotTable, card, multiRowCard, slicer, areaChart, scatterChart.
+- Include EVERY visual the user explicitly asks for. If the user names a table or a list of
+  columns to show (e.g. "a table listing Date, Close, Volume"), you MUST include a "tableEx"
+  visual binding exactly those columns under the "Values" role — do not substitute a chart.
 - Maximum 6 visuals per page, maximum 3 pages.
 - Page dimensions default to width=1280, height=720.
 - Visual positions are pixels (x, y, z, width, height); do not overlap; leave 20px margins.
@@ -19,6 +22,9 @@ SEMANTIC MODEL (tables and measures you may reference):
 
 PBIR VISUAL EXAMPLE (a bar chart of a measure by a category column):
 {visual_example}
+
+PBIR TABLE EXAMPLE (a tableEx listing several raw columns under the "Values" role):
+{table_example}
 
 OUTPUT FORMAT — return ONLY valid JSON in exactly this shape, nothing else:
 {

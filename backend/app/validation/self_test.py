@@ -99,14 +99,18 @@ async def review_artifacts(
         if not isinstance(issue, dict) or not issue.get("message"):
             continue
         severity = "error" if issue.get("severity") == "error" else "warning"
+        category = str(issue.get("category") or "review.issue")
+        target = issue.get("target")
+        repair_target = target if target in ("model", "report") else _infer_repair_target(category)
         findings.append(
             PreflightFinding(
-                category=str(issue.get("category") or "review.issue"),
+                category=category,
                 message=str(issue["message"]),
                 severity=severity,
                 file=str(issue.get("file") or ""),
                 fix="llm",
                 layer="llm_review",
+                repair_target=repair_target,
             )
         )
     return findings
@@ -159,6 +163,41 @@ async def run_self_test(
             )
 
     return SelfTestReport.from_findings(findings, layers_run=layers_run)
+
+
+def _infer_repair_target(category: str) -> str:
+    """Best-effort guess of which artifact an LLM finding belongs to, from its category.
+
+    Used as a fallback when the LLM self-review does not state a ``target``. Measure / DAX
+    / data-type / formatString issues live in the TMDL model; everything else (missing or
+    wrong visuals, pages, bindings) lives in the report.
+    """
+    cat = category.lower()
+    if cat.startswith(("tmdl", "te2")) or any(
+        kw in cat for kw in ("measure", "dax", "datatype", "data_type", "format")
+    ):
+        return "model"
+    return "report"
+
+
+def _route_llm_findings(findings: list[PreflightFinding]) -> tuple[list[str], list[str]]:
+    """Split LLM-repairable findings into (model_errs, report_errs) — dropping none.
+
+    Routing precedence: an explicit ``repair_target`` (set by the self-review / TE2 layer)
+    wins; otherwise the target is inferred from the category. The report is the default so
+    no finding can fall through both buckets. (Findings falling through *was* the bug: the
+    self-review emits free-form categories like ``visual.missing`` that matched neither the
+    old ``tmdl/te2`` nor ``pbir/structure/review`` prefix, so the loop re-tested forever
+    without ever dispatching a repair.)
+    """
+    model_errs: list[str] = []
+    report_errs: list[str] = []
+    for f in findings:
+        target = f.repair_target or _infer_repair_target(f.category)
+        if f.layer == "te2":
+            target = "model"  # TE2 only ever compiles the TMDL model.
+        (model_errs if target == "model" else report_errs).append(f.message)
+    return model_errs, report_errs
 
 
 def _apply_report_auto_fixes(report: ReportArtifacts) -> list[str]:
@@ -251,11 +290,7 @@ async def self_test_and_repair(
         if not llm_errors:
             break  # remaining errors are not LLM-repairable; stop looping.
 
-        model_errs = [f.message for f in llm_errors if f.category.startswith(("tmdl", "te2"))]
-        report_errs = [
-            f.message for f in llm_errors
-            if f.category.startswith(("pbir", "structure.dataset", "review"))
-        ]
+        model_errs, report_errs = _route_llm_findings(llm_errors)
         await emit({"stage": "self_test", "status": "repairing", "attempt": attempt})
         try:
             if model_errs:

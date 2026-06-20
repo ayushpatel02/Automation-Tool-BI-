@@ -50,6 +50,9 @@ class ValidationResult(BaseModel):
 FixKind = Literal["auto", "llm", "manual"]
 # Which test layer surfaced the finding.
 TestLayer = Literal["deterministic", "te2", "llm_review"]
+# For an "llm" fix, which artifact the repair prompt must target: the TMDL semantic
+# model or the PBIR report. None lets the repair router infer it from the category.
+RepairTarget = Literal["model", "report"]
 
 
 class PreflightFinding(BaseModel):
@@ -61,6 +64,10 @@ class PreflightFinding(BaseModel):
     file: str = ""
     fix: FixKind = "manual"
     layer: TestLayer = "deterministic"
+    # Which artifact an "llm" fix belongs to. Set by the LLM self-review (which knows
+    # whether an issue is about a DAX measure or a visual); None for the static layers,
+    # where the repair router infers the target from the category.
+    repair_target: RepairTarget | None = None
 
 
 class SelfTestReport(BaseModel):

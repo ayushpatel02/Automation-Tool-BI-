@@ -22,6 +22,7 @@ Return ONLY valid JSON in exactly this shape:
     {
       "category": "short.dotted.label (e.g. measure.logic, visual.missing, format.currency)",
       "severity": "error" | "warning",
+      "target": "model" | "report",
       "file": "the table/measure/visual the issue is about, or empty",
       "message": "one concrete sentence describing the problem and what to change"
     }
@@ -29,3 +30,12 @@ Return ONLY valid JSON in exactly this shape:
 }
 Use "error" only for problems that mean the report does not fulfil the request; use
 "warning" for quality improvements.
+
+Set "target" to where the fix must be applied:
+- "model"  → the fix is in the semantic model: a DAX measure's logic, a missing measure,
+             a measure's formatString/data type, a column data type.
+- "report" → the fix is in the report: a missing/extra visual, the wrong visual type, a
+             visual bound to the wrong fields, a page that should exist.
+When in doubt — e.g. a visual is missing because the measure it needs does not exist —
+report BOTH issues as separate entries: one with target "model" (add the measure) and one
+with target "report" (add the visual).

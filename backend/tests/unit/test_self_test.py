@@ -13,8 +13,14 @@ from app.schemas.connector import (
     SourceInfo,
     TableProfile,
 )
-from app.schemas.generation import ReportArtifacts, SemanticModelArtifacts
+from app.schemas.generation import (
+    PreflightFinding,
+    ReportArtifacts,
+    SemanticModelArtifacts,
+)
 from app.validation.self_test import (
+    _infer_repair_target,
+    _route_llm_findings,
     quick_self_test,
     run_self_test,
     self_test_and_repair,
@@ -37,6 +43,37 @@ class FakeLLM:
     async def complete_json(self, messages, json_schema=None):
         self.calls.append(messages)
         return self._response
+
+
+class ReviewThenRepairLLM:
+    """Flags a missing visual on the review pass, then 'adds' it on the repair pass.
+
+    Branches on message content so a single fake can serve both the LLM self-review and the
+    subsequent repair call the way the real router does.
+    """
+
+    def __init__(self, fixed_report: dict):
+        self.config = {"supports_structured_output": False}
+        self._fixed = fixed_report
+        self.review_calls = 0
+        self.repair_calls = 0
+        self._repaired = False
+
+    async def complete_json(self, messages, json_schema=None):
+        text = " ".join(m.get("content", "") for m in messages)
+        if "meticulous Power BI reviewer" in text:  # the self-review system prompt
+            self.review_calls += 1
+            if self._repaired:
+                return {"issues": []}
+            return {"issues": [{
+                "category": "visual.missing",
+                "severity": "error",
+                "target": "report",
+                "message": "The report is missing the requested table listing Date, Close, Volume.",
+            }]}
+        self.repair_calls += 1   # anything else is a repair pass
+        self._repaired = True
+        return self._fixed
 
 
 def _profile() -> SchemaProfile:
@@ -110,6 +147,69 @@ async def test_repair_loop_heals_deterministic_faults_without_llm(tmp_path):
     assert result.report_card.passed, [f.message for f in result.report_card.errors]
     assert result.report_card.auto_fixed  # recorded that it normalized something
     assert result.zip_path.exists()
+
+
+def test_route_llm_findings_drops_nothing():
+    """Every fix='llm' finding must land in exactly one repair bucket — never dropped.
+
+    Regression: the self-review emits free-form categories like 'visual.missing' that
+    matched neither the old 'tmdl/te2' nor 'pbir/structure/review' routing prefix, so the
+    repair loop spun without ever dispatching a repair.
+    """
+    findings = [
+        PreflightFinding(category="visual.missing", message="missing table", fix="llm",
+                         layer="llm_review", repair_target="report"),
+        PreflightFinding(category="measure.logic", message="YoY is a SUM", fix="llm",
+                         layer="llm_review", repair_target="model"),
+        PreflightFinding(category="pbir.cross_ref", message="unknown table", fix="llm",
+                         layer="deterministic"),
+        PreflightFinding(category="tmdl.datatype", message="bad type", fix="llm",
+                         layer="deterministic"),
+        PreflightFinding(category="te2.compile", message="compile failed", fix="llm",
+                         layer="te2"),
+    ]
+    model_errs, report_errs = _route_llm_findings(findings)
+    assert "missing table" in report_errs
+    assert "unknown table" in report_errs
+    assert "YoY is a SUM" in model_errs
+    assert "bad type" in model_errs
+    assert "compile failed" in model_errs
+    assert len(model_errs) + len(report_errs) == len(findings)  # nothing lost
+
+
+def test_infer_repair_target():
+    assert _infer_repair_target("visual.missing") == "report"      # a visual → report
+    assert _infer_repair_target("pbir.cross_ref") == "report"
+    assert _infer_repair_target("review.issue") == "report"
+    assert _infer_repair_target("measure.logic") == "model"        # a DAX measure → model
+    assert _infer_repair_target("format.currency") == "model"      # formatString → model
+    assert _infer_repair_target("tmdl.indentation") == "model"
+
+
+@pytest.mark.asyncio
+async def test_repair_loop_routes_review_missing_visual_to_report(
+    tmp_path, sample_model, valid_report
+):
+    """A review 'visual.missing' error must reach the report repair prompt and converge."""
+    fixed = {
+        "report_json": {"$schema": "report"},
+        "pages": [{"page_id": "P1", "page_json": {"name": "P1"}, "visuals": [{
+            "visual_id": "t1",
+            "visual_json": {"$schema": _VC, "name": "t1", "visual": {
+                "visualType": "tableEx",
+                "query": {"queryState": {"Values": {"projections": [{"field": {
+                    "Column": {"Expression": {"SourceRef": {"Entity": "Sales"}},
+                               "Property": "Amount"}}}]}}},
+            }},
+        }]}],
+    }
+    fake = ReviewThenRepairLLM(fixed)
+    result = await self_test_and_repair(
+        model=sample_model, report=valid_report, profile=_profile(), request="r",
+        project_name="R", output_dir=tmp_path, llm=fake, max_attempts=3,
+    )
+    assert fake.repair_calls >= 1, "review 'visual.missing' finding was dropped, not repaired"
+    assert result.report_card.passed, [f.message for f in result.report_card.errors]
 
 
 @pytest.mark.asyncio
