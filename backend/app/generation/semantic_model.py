@@ -323,23 +323,28 @@ def patch_file_sources(
             ref = m.group(1)
             server_path = _resolve_file(ref, file_map, sole_path)
             if not server_path:
+                # Cannot identify which file this is (ambiguous multi-source case).
                 continue
             server_file = Path(server_path)
-            if not server_file.exists():
-                continue
             display = path_to_display.get(server_path, server_file.name)
 
-            # Embed only while the encoded total stays under the budget; Base64 that
-            # would push the model past Power BI's 10 MB query limit is bundled instead.
-            b64_len = _b64_len(server_file.stat().st_size)
-            if embedded_b64 + b64_len <= _EMBED_BUDGET_BYTES:
-                b64 = base64.b64encode(server_file.read_bytes()).decode()
-                replacement = f'Binary.FromText("{b64}", BinaryEncoding.Base64)'
-                embedded_b64 += len(b64)
+            if server_file.exists():
+                # File reachable on the server — embed if it fits the budget, else bundle.
+                b64_len = _b64_len(server_file.stat().st_size)
+                if embedded_b64 + b64_len <= _EMBED_BUDGET_BYTES:
+                    b64 = base64.b64encode(server_file.read_bytes()).decode()
+                    replacement = f'Binary.FromText("{b64}", BinaryEncoding.Base64)'
+                    embedded_b64 += len(b64)
+                else:
+                    # Too large to embed: bundle the file and point at an ABSOLUTE
+                    # placeholder so Power BI doesn't reject it as a relative path.
+                    data_files[display] = server_path
+                    replacement = f'File.Contents("{_PLACEHOLDER_DIR}{display}")'
             else:
-                # Too large to embed: bundle the file and point at an ABSOLUTE
-                # placeholder so Power BI doesn't reject it as a relative path.
-                data_files[display] = server_path
+                # Server file not found (deleted/moved between upload and generation):
+                # still replace the relative path with an absolute placeholder so the
+                # error in Power BI Desktop is "file not found at C:\PowerBI-Data\..."
+                # rather than the harder-to-diagnose "must be a valid absolute path".
                 replacement = f'File.Contents("{_PLACEHOLDER_DIR}{display}")'
 
             new_content = new_content[: m.start()] + replacement + new_content[m.end() :]

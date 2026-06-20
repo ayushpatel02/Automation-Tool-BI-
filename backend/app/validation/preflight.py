@@ -35,6 +35,13 @@ _M_TYPE_RE = re.compile(
     r"\btype\s+(string|int64|double|decimal|dateTime|boolean|binary)\b", re.IGNORECASE
 )
 _DATATYPE_RE = re.compile(r"dataType:\s*(\S+)")
+
+# A File.Contents(path) call is safe only if the path is an absolute Windows path
+# (starts with a drive letter and backslash, e.g. C:\ ) or has been replaced by a
+# Binary.FromText(...) embed. Any other form is a relative path that Power BI Desktop
+# will reject with "The supplied file path must be a valid absolute path".
+_FILE_CONTENTS_RE = re.compile(r'\bFile\.Contents\("([^"]*)"\)')
+_WINDOWS_ABS_RE = re.compile(r'^[A-Za-z]:\\')  # e.g. C:\... or D:\...
 _TABLE_DECL_RE = re.compile(r"^\s*table\s+\S+", re.MULTILINE)
 _M_FENCE_RE = re.compile(r"source\s*=\s*```")
 
@@ -176,7 +183,23 @@ def _lint_tmdl_text(label: str, content: str, *, is_table: bool) -> list[Preflig
             fix="llm",
         )
 
-    # 8. Table files must declare `table <Name>` and carry a partition.
+    # 8. Relative File.Contents paths (Power BI only accepts absolute Windows paths).
+    # patch_file_sources() should have replaced every File.Contents() with either a
+    # Binary.FromText embed or C:\PowerBI-Data\... but if it ran before this lint (e.g.
+    # on the stored model) or a repair prompt re-introduced the call, flag it here.
+    for fc_m in _FILE_CONTENTS_RE.finditer(content):
+        path_arg = fc_m.group(1)
+        if not _WINDOWS_ABS_RE.match(path_arg):
+            add(
+                "tmdl.file_path",
+                f"File.Contents(\"{path_arg}\") is a relative path — Power BI Desktop "
+                "will reject it with 'The supplied file path must be a valid absolute "
+                "path'. The data file must be embedded as Base64 or referenced via an "
+                "absolute path.",
+                fix="manual",  # patching happens in patch_file_sources, not via LLM
+            )
+
+    # 9. Table files must declare `table <Name>` and carry a partition.
     if is_table:
         if not _TABLE_DECL_RE.search(content):
             add("tmdl.structure", "Missing 'table <Name>' declaration.", fix="llm")

@@ -156,6 +156,76 @@ def test_oversized_file_is_bundled_not_embedded_past_10mb_query_limit(tmp_path, 
     assert data_files == {"StockData.csv": str(server)}  # bundled instead
 
 
+def test_missing_server_file_still_gets_absolute_placeholder(tmp_path):
+    """If the uploaded file was deleted/moved, File.Contents must still get an absolute path.
+
+    Regression: the old code hit `continue` when server_file.exists() was False, leaving
+    File.Contents("StockData.csv") (a relative path) in the TMDL. Power BI Desktop then
+    rejected it with "The supplied file path must be a valid absolute path" — a confusing
+    error when the real problem is just that the file vanished from the server.
+    """
+    server = tmp_path / "uuid.csv"
+    # Do NOT create the file — simulate it being cleaned up between upload and generation.
+    profile = _profile(server, original_name="StockData.csv")
+    patched, data_files = patch_file_sources(_model("StockData.csv"), profile)
+    out = patched.tables["StockData.tmdl"]
+
+    # Must use the absolute placeholder — never leave a bare relative filename.
+    assert "File.Contents(" in out
+    assert 'File.Contents("C:\\PowerBI-Data\\StockData.csv")' in out
+    assert "File.Contents(\"StockData.csv\")" not in out  # relative form gone
+    assert "Binary.FromText(" not in out  # can't embed what we can't read
+    assert data_files == {}  # can't bundle it either — no data_files entry
+
+
+def test_preflight_flags_relative_file_contents():
+    """A File.Contents with a non-absolute path must be caught by the linter."""
+    from app.schemas.generation import SemanticModelArtifacts
+    from app.validation.preflight import lint_model
+
+    table_with_relative_path = (
+        "table StockData\n"
+        "\tcolumn id\n"
+        "\t\tdataType: int64\n"
+        "\tpartition StockData = m\n"
+        "\t\tmode: import\n"
+        '\t\tsource = let Source = Csv.Document(File.Contents("StockData.csv"), '
+        '[Delimiter=","]) in Source\n'
+    )
+    model = SemanticModelArtifacts(
+        model_tmdl="model M\n",
+        tables={"StockData.tmdl": table_with_relative_path},
+    )
+    findings = lint_model(model)
+    assert any(f.category == "tmdl.file_path" for f in findings), [
+        f.category for f in findings
+    ]
+
+
+def test_preflight_does_not_flag_windows_absolute_file_contents():
+    """C:\\PowerBI-Data\\... is a valid absolute path and must NOT be flagged."""
+    from app.schemas.generation import SemanticModelArtifacts
+    from app.validation.preflight import lint_model
+
+    table_with_abs_path = (
+        "table StockData\n"
+        "\tcolumn id\n"
+        "\t\tdataType: int64\n"
+        "\tpartition StockData = m\n"
+        "\t\tmode: import\n"
+        '\t\tsource = let Source = Csv.Document(File.Contents("C:\\\\PowerBI-Data\\\\StockData.csv"), '
+        '[Delimiter=","]) in Source\n'
+    )
+    model = SemanticModelArtifacts(
+        model_tmdl="model M\n",
+        tables={"StockData.tmdl": table_with_abs_path},
+    )
+    findings = lint_model(model)
+    assert not any(f.category == "tmdl.file_path" for f in findings), [
+        f.message for f in findings if f.category == "tmdl.file_path"
+    ]
+
+
 def test_b64_len_predicts_base64_growth():
     """_b64_len must match real Base64 output length (4 chars per 3 bytes)."""
     import base64 as _b64
