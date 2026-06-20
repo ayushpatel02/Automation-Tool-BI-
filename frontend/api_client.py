@@ -102,6 +102,9 @@ class ApiClient:
     def revert(self, session_id: str) -> dict:
         return self._request("POST", f"/sessions/{session_id}/revert")
 
+    def run_self_test(self, session_id: str) -> dict:
+        return self._request("POST", f"/sessions/{session_id}/selftest")
+
     def get_preview(self, session_id: str) -> dict:
         return self._get(f"/sessions/{session_id}/preview")
 
