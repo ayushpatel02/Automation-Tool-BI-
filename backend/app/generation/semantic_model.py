@@ -218,17 +218,33 @@ def sanitize_model(model: SemanticModelArtifacts) -> SemanticModelArtifacts:
 # does this once, after all generation/repair cycles are done (so the Base64 blob
 # never bloats a repair-prompt's context).
 #
-#   - files ≤ 90 MB → embed as Base64 (self-contained; the normal path)
-#   - files > 90 MB → too large to embed; bundle the file in the zip and rewrite
-#                     the reference to an absolute placeholder the user edits once
+# BUT Power BI Desktop rejects a model whose Power Query (M) definitions exceed 10 MB
+# in total ("We were unable to update the queries because they exceed the size limit
+# of 10MB"). Base64 inflates bytes by 4/3, so a ~7.5 MB file already overflows. We
+# therefore embed only while the *encoded* total stays under a budget that leaves
+# headroom for the surrounding M code:
+#
+#   - encoded size fits the budget → embed as Base64 (self-contained; the normal path)
+#   - otherwise                    → bundle the file in the zip and rewrite the
+#                                     reference to an absolute placeholder the user
+#                                     edits once
 
 _FILE_CONTENTS_RE = re.compile(r'\bFile\.Contents\("([^"]*)"\)')
-# Embed essentially any uploadable file (the upload cap is 100 MB). Embedding runs
-# post-repair, so there is no prompt-context cost to a large blob.
-_EMBED_LIMIT_BYTES = 90 * 1024 * 1024  # 90 MB
-# Placeholder absolute path for the rare file too large to embed. It is absolute
-# (so it does not trigger the "must be a valid absolute path" error) and obvious.
+_BINARY_FROMTEXT_RE = re.compile(r'Binary\.FromText\("([^"]*)"')
+# Power BI's hard limit on the combined size of all M query definitions.
+_QUERY_SIZE_LIMIT_BYTES = 10 * 1024 * 1024  # 10 MB
+# Max TOTAL Base64 we will embed across the whole model. Kept below the 10 MB query
+# limit so the M scaffolding (let/in, Csv.Document, column types, other tables) fits
+# in the remaining headroom. ~8 MB of Base64 ≈ a 6 MB source file.
+_EMBED_BUDGET_BYTES = 8 * 1024 * 1024  # 8 MB
+# Placeholder absolute path for a file too large to embed. It is absolute (so it does
+# not trigger the "must be a valid absolute path" error) and obvious.
 _PLACEHOLDER_DIR = "C:\\PowerBI-Data\\"
+
+
+def _b64_len(raw_bytes: int) -> int:
+    """Predicted Base64 length for a file of *raw_bytes* bytes (4 chars per 3 bytes)."""
+    return 4 * ((raw_bytes + 2) // 3)
 
 
 def _file_sources(profile: SchemaProfile) -> list[SourceInfo]:
@@ -289,10 +305,15 @@ def patch_file_sources(
 
     data_files: dict[str, str] = {}
     new_tables: dict[str, str] = {}
+    embedded_b64 = 0  # running total of Base64 chars already committed to the model
 
     for fname, content in artifacts.tables.items():
         if "Binary.FromText(" in content:
             # Already embedded (idempotency guard for re-tests / refinement re-runs).
+            # Count its payload against the budget so a later table can't overflow.
+            embedded_b64 += sum(
+                len(mm.group(1)) for mm in _BINARY_FROMTEXT_RE.finditer(content)
+            )
             new_tables[fname] = content
             continue
 
@@ -308,9 +329,13 @@ def patch_file_sources(
                 continue
             display = path_to_display.get(server_path, server_file.name)
 
-            if server_file.stat().st_size <= _EMBED_LIMIT_BYTES:
+            # Embed only while the encoded total stays under the budget; Base64 that
+            # would push the model past Power BI's 10 MB query limit is bundled instead.
+            b64_len = _b64_len(server_file.stat().st_size)
+            if embedded_b64 + b64_len <= _EMBED_BUDGET_BYTES:
                 b64 = base64.b64encode(server_file.read_bytes()).decode()
                 replacement = f'Binary.FromText("{b64}", BinaryEncoding.Base64)'
+                embedded_b64 += len(b64)
             else:
                 # Too large to embed: bundle the file and point at an ABSOLUTE
                 # placeholder so Power BI doesn't reject it as a relative path.

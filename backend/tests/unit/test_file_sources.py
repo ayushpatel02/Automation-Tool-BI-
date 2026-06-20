@@ -120,7 +120,7 @@ def test_large_file_bundled_with_absolute_placeholder(tmp_path, monkeypatch):
 
     server = tmp_path / "uuid.csv"
     _write_csv(server)
-    monkeypatch.setattr(sm, "_EMBED_LIMIT_BYTES", 0)  # force the "too large" branch
+    monkeypatch.setattr(sm, "_EMBED_BUDGET_BYTES", 0)  # force the "too large" branch
 
     profile = _profile(server, original_name="StockData.csv")
     patched, data_files = patch_file_sources(_model("StockData.csv"), profile)
@@ -131,6 +131,39 @@ def test_large_file_bundled_with_absolute_placeholder(tmp_path, monkeypatch):
     assert data_files == {"StockData.csv": str(server)}
     assert "Binary.FromText(" not in out
     assert 'File.Contents("C:\\PowerBI-Data\\StockData.csv")' in out
+
+
+def test_oversized_file_is_bundled_not_embedded_past_10mb_query_limit(tmp_path, monkeypatch):
+    """A file whose Base64 would breach the embed budget is bundled, never embedded.
+
+    Regression for "We were unable to update the queries because they exceed the size
+    limit of 10MB": Base64 inflates bytes by 4/3, so embedding a large file overflows
+    Power BI's 10 MB query limit. Such files must be bundled with an absolute path.
+    """
+    import app.generation.semantic_model as sm
+
+    # Shrink the budget so a tiny test file deterministically exceeds it.
+    monkeypatch.setattr(sm, "_EMBED_BUDGET_BYTES", 8)
+    server = tmp_path / "uuid.csv"
+    _write_csv(server, n_rows=50)  # Base64 length > 8 chars
+    assert sm._b64_len(server.stat().st_size) > sm._EMBED_BUDGET_BYTES
+
+    profile = _profile(server, original_name="StockData.csv")
+    patched, data_files = patch_file_sources(_model("StockData.csv"), profile)
+    out = patched.tables["StockData.tmdl"]
+
+    assert "Binary.FromText(" not in out  # not embedded — would blow the 10 MB limit
+    assert data_files == {"StockData.csv": str(server)}  # bundled instead
+
+
+def test_b64_len_predicts_base64_growth():
+    """_b64_len must match real Base64 output length (4 chars per 3 bytes)."""
+    import base64 as _b64
+
+    import app.generation.semantic_model as sm
+
+    for n in (0, 1, 2, 3, 4, 100, 999, 1024):
+        assert sm._b64_len(n) == len(_b64.b64encode(b"x" * n).decode())
 
 
 def test_no_file_sources_is_a_noop():

@@ -270,10 +270,10 @@ if session_id:
                     st.info(
                         "**Your data is embedded in the model.** The uploaded file's "
                         "contents are baked directly into the .pbip, so it opens in Power BI "
-                        "Desktop and loads immediately — no file paths to fix. (For very "
-                        "large files the data file is bundled in the zip instead; if Power BI "
-                        "can't find it, open **Transform Data → Data source settings** and "
-                        "point it at the file in the extracted folder.)",
+                        "Desktop and loads immediately — no file paths to fix. (Power BI caps "
+                        "embedded data at ~10 MB, so larger files are bundled in the zip "
+                        "instead; if Power BI can't find one, open **Transform Data → Data "
+                        "source settings** and point it at the file in the extracted folder.)",
                         icon="📎",
                     )
                 st.caption("Then continue to the **Refine** page to edit it with AI chat.")
