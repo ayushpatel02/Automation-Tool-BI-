@@ -156,8 +156,37 @@ def _normalize_datasource_version(tmdl: str) -> str:
     return _TMDL_DSV_RE.sub(repl, tmdl)
 
 
+def _strip_tmdl_comments(tmdl: str) -> str:
+    """Remove ``//`` line comments from TMDL (but not from inside M source blocks).
+
+    TMDL has NO comment syntax — ``//`` at the start of a TMDL line causes
+    "Unexpected line type: Other!" on Power BI Desktop load. Power Query M *does*
+    support ``//`` comments, so lines inside a fenced M block (between ``source = ``` ``
+    and the closing ````` ``) are left intact.
+    """
+    lines = tmdl.split("\n")
+    result: list[str] = []
+    in_m = False
+    for ln in lines:
+        stripped = ln.strip()
+        if not in_m and stripped.startswith("source") and "```" in ln:
+            in_m = True
+            result.append(ln)
+            continue
+        if in_m:
+            result.append(ln)
+            if stripped == "```":
+                in_m = False
+            continue
+        if stripped.startswith("//"):
+            continue  # drop the TMDL comment line
+        result.append(ln)
+    return "\n".join(result)
+
+
 def _sanitize_tmdl(tmdl: str) -> str:
     """Fix the common LLM TMDL/M mistakes that break Power BI Desktop on load."""
+    tmdl = _strip_tmdl_comments(tmdl)
     tmdl = _normalize_tmdl_indentation(tmdl)
     tmdl = _normalize_tmdl_booleans(tmdl)
     tmdl = _normalize_m_types(tmdl)

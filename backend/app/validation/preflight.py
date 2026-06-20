@@ -150,7 +150,25 @@ def _lint_tmdl_text(label: str, content: str, *, is_table: bool) -> list[Preflig
                 fix="llm",
             )
 
-    # 6. Unbalanced M source fences.
+    # 6. TMDL comment lines (// ...).
+    # TMDL has no comment syntax: a line starting with // causes Power BI Desktop to
+    # reject the file with "Unexpected line type: Other!". The sanitizer strips them
+    # automatically; flag them here so the finding appears in the self-test report.
+    comment_lines = [
+        i + 1
+        for i, (line, in_m) in enumerate(zip(lines, mask, strict=False))
+        if not in_m and line.strip().startswith("//")
+    ]
+    if comment_lines:
+        preview = ", ".join(str(n) for n in comment_lines[:5])
+        add(
+            "tmdl.comment",
+            f"{len(comment_lines)} line(s) use '//' which is not valid TMDL syntax "
+            f"(line {preview}). Comments must be removed.",
+            fix="auto",
+        )
+
+    # 7. Unbalanced M source fences.
     if content.count("```") % 2 != 0:
         add(
             "tmdl.m_fence",
@@ -158,7 +176,7 @@ def _lint_tmdl_text(label: str, content: str, *, is_table: bool) -> list[Preflig
             fix="llm",
         )
 
-    # 7. Table files must declare `table <Name>` and carry a partition.
+    # 8. Table files must declare `table <Name>` and carry a partition.
     if is_table:
         if not _TABLE_DECL_RE.search(content):
             add("tmdl.structure", "Missing 'table <Name>' declaration.", fix="llm")

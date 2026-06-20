@@ -25,6 +25,10 @@ RULES:
   Flag properties with no value (e.g. just `isHidden` on its own line) mean `true`.
 - Indentation MUST use TAB characters, not spaces. Every level of nesting adds one tab.
   Never use 2-space or 4-space indentation — TMDL will reject it.
+- TMDL has NO comment syntax. Do NOT write `//` or `/* */` comments anywhere in any
+  TMDL file. A `//` line causes Power BI Desktop to reject the file immediately with
+  "Unexpected line type: Other!". If expressions_tmdl has no content, set it to `""`.
+  Never write a placeholder comment like `// No shared expressions defined`.
 - Partition mode values are strictly lowercase/camelCase: `import`, `directQuery`,
   `dualMode`. Never write `Import`, `DirectQuery`, or `DualMode`.
 - The model header's `defaultPowerBIDataSourceVersion` MUST be the enum `powerBI_V3` —

@@ -64,6 +64,59 @@ def test_lint_model_flags_invalid_m_type_and_datatype():
     assert "tmdl.datatype" in cats
 
 
+def test_lint_model_flags_and_sanitizer_strips_tmdl_comments():
+    """// lines must be detected by the linter and stripped by the sanitizer.
+
+    Regression: LLMs generate `// No shared expressions defined for this model.` in
+    expressions.tmdl; Power BI Desktop rejects this with
+    "Unexpected line type: Other! ... Line - '// No shared expressions defined'".
+    """
+    from app.generation.semantic_model import _strip_tmdl_comments, sanitize_model
+
+    expressions_with_comment = "// No shared expressions defined for this model.\n"
+    model = SemanticModelArtifacts(
+        model_tmdl="model M\n",
+        tables={"T.tmdl": "table T\n\tpartition T = m\n\t\tsource = let x = 1 in x\n"},
+        expressions_tmdl=expressions_with_comment,
+    )
+    # Linter detects the comment line.
+    cats = _categories(lint_model(model))
+    assert "tmdl.comment" in cats
+
+    # Comment is auto-fixable.
+    comment_findings = [f for f in lint_model(model) if f.category == "tmdl.comment"]
+    assert comment_findings[0].fix == "auto"
+
+    # Sanitizer strips it.
+    stripped = _strip_tmdl_comments(expressions_with_comment)
+    assert "//" not in stripped
+
+    # After sanitize_model, expressions_tmdl is effectively empty so the assembler
+    # will not write the file.
+    clean = sanitize_model(model)
+    assert not clean.expressions_tmdl.strip()
+
+
+def test_lint_model_comment_not_flagged_inside_m_block():
+    """// inside a fenced M source block is valid Power Query and must not be flagged."""
+    table = (
+        "table T\n"
+        "\tcolumn C\n"
+        "\t\tdataType: int64\n"
+        "\tpartition T = m\n"
+        "\t\tmode: import\n"
+        "\t\tsource = ```\n"
+        "\t\t\tlet\n"
+        "\t\t\t\t// This is a valid M comment inside the M block\n"
+        "\t\t\t\tSource = 1\n"
+        "\t\t\tin\n"
+        "\t\t\t\tSource\n"
+        "\t\t\t```\n"
+    )
+    model = SemanticModelArtifacts(model_tmdl="model M\n", tables={"T.tmdl": table})
+    assert "tmdl.comment" not in _categories(lint_model(model))
+
+
 def test_lint_model_flags_missing_table_decl_and_partition():
     model = SemanticModelArtifacts(
         model_tmdl="model M\n",
