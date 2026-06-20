@@ -36,6 +36,24 @@ async def validate_semantic_model(model: SemanticModelArtifacts) -> ValidationRe
     return _structural_checks(model)
 
 
+def te2_available() -> bool:
+    """True when an authoritative Tabular Editor 2 CLI is configured and present."""
+    te2 = settings.te2_cli_path
+    return bool(te2 and Path(te2).exists())
+
+
+async def run_te2_if_available(model: SemanticModelArtifacts) -> ValidationResult | None:
+    """Run the authoritative TE2 compile when configured; otherwise return None.
+
+    Lets the self-test add a TE2 layer without duplicating the structural fallback that
+    the deterministic linter already covers.
+    """
+    te2 = settings.te2_cli_path
+    if not (te2 and Path(te2).exists()):
+        return None
+    return await _validate_with_te2(model, te2)
+
+
 # --- TE2 CLI path ----------------------------------------------------------
 
 async def _validate_with_te2(model: SemanticModelArtifacts, te2_path: str) -> ValidationResult:
@@ -84,35 +102,25 @@ def _parse_te2_output(returncode: int, stdout: str, stderr: str) -> ValidationRe
 # --- Structural fallback ---------------------------------------------------
 
 def _structural_checks(model: SemanticModelArtifacts) -> ValidationResult:
-    errors: list[ValidationError] = []
-    warnings: list[ValidationError] = []
+    """Deep deterministic TMDL checks (the pre-flight linter), mapped to a ValidationResult.
 
-    if not model.model_tmdl.strip():
-        errors.append(ValidationError(file="model.tmdl", message="model.tmdl is empty"))
-    if not model.tables:
-        errors.append(ValidationError(file="model", message="No table definitions produced"))
+    This is what the per-stage retry loop validates against when TE2 is unavailable, so it
+    must catch the Power-BI-open-time format errors (tabs, mode casing, booleans, M types)
+    rather than only the coarse structural ones.
+    """
+    from app.validation.preflight import lint_model
 
-    valid_types = {"string", "int64", "double", "decimal", "dateTime", "boolean", "binary"}
-    for fname, content in model.tables.items():
-        if not re.search(r"^\s*table\s+\S+", content, re.MULTILINE):
-            errors.append(
-                ValidationError(file=fname, message="Missing 'table <Name>' declaration")
-            )
-        if "partition" not in content:
-            warnings.append(
-                ValidationError(
-                    file=fname,
-                    message="No partition/source found (table may not refresh)",
-                    severity="warning",
-                )
-            )
-        for m in re.finditer(r"dataType:\s*(\S+)", content):
-            dt = m.group(1)
-            if dt not in valid_types:
-                errors.append(
-                    ValidationError(file=fname, message=f"Invalid dataType '{dt}'")
-                )
-
+    findings = lint_model(model)
+    errors = [
+        ValidationError(file=f.file, message=f.message)
+        for f in findings
+        if f.severity == "error"
+    ]
+    warnings = [
+        ValidationError(file=f.file, message=f.message, severity="warning")
+        for f in findings
+        if f.severity == "warning"
+    ]
     return ValidationResult(valid=not errors, errors=errors, warnings=warnings)
 
 

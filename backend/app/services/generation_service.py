@@ -175,6 +175,67 @@ async def run_refine_task(
             await events.close(session_id)
 
 
+async def run_self_test_task(
+    session_id: str,
+    api_key: str | None,
+    project_name: str,
+    run_llm_review: bool = True,
+) -> None:
+    """On-demand re-test: run the self-test + auto-repair loop on the current artifacts."""
+    from app.validation import self_test_and_repair
+
+    cb = events.make_progress_cb(session_id)
+    async with SessionLocal() as db:
+        session = await _load_session(db, session_id)
+        if session is None or not session.current_artifacts:
+            await events.close(session_id)
+            return
+        session.status = "testing"
+        await db.commit()
+
+        try:
+            artifacts = session.current_artifacts
+            model_art = SemanticModelArtifacts(**artifacts["semantic_model"])
+            report_art = ReportArtifacts(**artifacts["report"])
+            profile = SchemaProfile(**session.schema_profile)
+            project_name = artifacts.get("project_name", project_name)
+            llm = LLMRouter(session.model_id, api_key) if api_key else None
+            output_dir = settings.generated_dir / session_id
+            output_dir.mkdir(parents=True, exist_ok=True)
+
+            st = await self_test_and_repair(
+                model=model_art,
+                report=report_art,
+                profile=profile,
+                request=session.original_request,
+                project_name=project_name,
+                output_dir=output_dir,
+                llm=llm,
+                run_llm_review=run_llm_review and llm is not None,
+                progress=cb,
+            )
+            session.current_artifacts = {
+                "semantic_model": st.model.model_dump(),
+                "report": st.report.model_dump(),
+                "project_name": project_name,
+            }
+            session.download_path = str(st.zip_path)
+            last_validation = dict(session.last_validation or {})
+            last_validation["self_test"] = st.report_card.model_dump()
+            session.last_validation = last_validation
+            session.status = "complete"
+            session.error_message = None
+            await db.commit()
+        except Exception as exc:  # noqa: BLE001 — record failure, keep artifacts usable
+            logger.exception("Self-test failed for session %s", session_id)
+            session.status = "complete"
+            session.error_message = str(exc)
+            await db.commit()
+            await cb({"stage": "self_test", "status": "error", "message": str(exc)})
+        finally:
+            await events.close(session_id)
+
+
 def _snapshot(session: GenerationSession) -> None:
     if not session.current_artifacts:
         return
@@ -196,6 +257,7 @@ async def _persist_outcome(db, session, outcome, status_done: str = "complete") 
         "report": outcome.report_validation.model_dump()
         if outcome.report_validation
         else None,
+        "self_test": outcome.self_test.model_dump() if outcome.self_test else None,
         "attempts": outcome.attempts,
     }
     session.status = status_done if outcome.success else "failed"

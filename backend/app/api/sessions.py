@@ -29,6 +29,7 @@ from app.services.generation_service import (
     revert_last,
     run_generation_task,
     run_refine_task,
+    run_self_test_task,
 )
 from app.services.keys import resolve_api_key
 from app.services.preview import build_preview
@@ -172,6 +173,31 @@ async def refine(
     background.add_task(
         run_refine_task, session.id, api_key, body.message, project_name
     )
+    return _to_response(session)
+
+
+@router.post("/{session_id}/selftest", response_model=SessionResponse, status_code=202)
+async def self_test(
+    session_id: str,
+    background: BackgroundTasks,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> SessionResponse:
+    """Re-run the self-test (deterministic + TE2 + LLM review) and auto-repair the report.
+
+    Streams progress on the session's event channel; poll GET /validation for the report.
+    """
+    session = await _owned_session(session_id, user, db)
+    if not session.current_artifacts:
+        raise HTTPException(status_code=400, detail="Nothing to test yet")
+    # A key enables the TE2/LLM-review layers + LLM repair; without one we still run the
+    # deterministic linter + structural tree checks.
+    try:
+        api_key = resolve_api_key(user, session.model_id)
+    except Exception:  # noqa: BLE001 — degrade gracefully to deterministic-only testing
+        api_key = None
+    project_name = session.current_artifacts.get("project_name", "GeneratedReport")
+    background.add_task(run_self_test_task, session.id, api_key, project_name)
     return _to_response(session)
 
 

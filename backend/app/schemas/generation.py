@@ -43,6 +43,63 @@ class ValidationResult(BaseModel):
         return cls(valid=True)
 
 
+# --- Self-test (pre-flight) ------------------------------------------------
+
+# How a finding can be resolved: a deterministic normalizer ("auto"), an LLM repair
+# pass ("llm"), or a human ("manual").
+FixKind = Literal["auto", "llm", "manual"]
+# Which test layer surfaced the finding.
+TestLayer = Literal["deterministic", "te2", "llm_review"]
+
+
+class PreflightFinding(BaseModel):
+    """A single issue found while self-testing a generated report before handing it over."""
+
+    category: str  # e.g. "tmdl.indentation", "structure.missing_file", "pbir.cross_ref"
+    message: str
+    severity: Literal["error", "warning"] = "error"
+    file: str = ""
+    fix: FixKind = "manual"
+    layer: TestLayer = "deterministic"
+
+
+class SelfTestReport(BaseModel):
+    """Aggregated result of running the self-test (one or more layers) on a report."""
+
+    passed: bool
+    layers_run: list[TestLayer] = Field(default_factory=list)
+    findings: list[PreflightFinding] = Field(default_factory=list)
+    # Human-readable description of every fix the auto-repair loop applied.
+    auto_fixed: list[str] = Field(default_factory=list)
+    attempts: int = 1
+
+    @property
+    def errors(self) -> list[PreflightFinding]:
+        return [f for f in self.findings if f.severity == "error"]
+
+    @property
+    def warnings(self) -> list[PreflightFinding]:
+        return [f for f in self.findings if f.severity == "warning"]
+
+    @classmethod
+    def from_findings(
+        cls,
+        findings: list[PreflightFinding],
+        *,
+        layers_run: list[TestLayer],
+        auto_fixed: list[str] | None = None,
+        attempts: int = 1,
+    ) -> SelfTestReport:
+        passed = not any(f.severity == "error" for f in findings)
+        return cls(
+            passed=passed,
+            layers_run=layers_run,
+            findings=findings,
+            auto_fixed=auto_fixed or [],
+            attempts=attempts,
+        )
+
+
 # --- API requests / responses ---------------------------------------------
 
 class GenerateRequest(BaseModel):

@@ -139,6 +139,19 @@ def _sanitize_tmdl(tmdl: str) -> str:
     return tmdl
 
 
+def sanitize_model(model: SemanticModelArtifacts) -> SemanticModelArtifacts:
+    """Re-apply the deterministic TMDL normalizers across every artifact in a model.
+
+    Used by the self-test's auto-repair step to fix the ``fix=\"auto\"`` findings.
+    """
+    return SemanticModelArtifacts(
+        model_tmdl=_sanitize_tmdl(model.model_tmdl),
+        tables={k: _sanitize_tmdl(v) for k, v in model.tables.items()},
+        relationships_tmdl=_sanitize_tmdl(model.relationships_tmdl),
+        expressions_tmdl=_sanitize_tmdl(model.expressions_tmdl),
+    )
+
+
 def _load(name: str) -> str:
     return (_PROMPTS / name).read_text(encoding="utf-8")
 

@@ -18,6 +18,7 @@ from app.llm.router import LLMError, LLMRouter
 from app.schemas.connector import SchemaProfile
 from app.schemas.generation import (
     ReportArtifacts,
+    SelfTestReport,
     SemanticModelArtifacts,
     ValidationResult,
 )
@@ -35,6 +36,7 @@ class GenerationOutcome:
     report: ReportArtifacts | None = None
     model_validation: ValidationResult | None = None
     report_validation: ValidationResult | None = None
+    self_test: SelfTestReport | None = None
     project_root: Path | None = None
     zip_path: Path | None = None
     attempts: dict = field(default_factory=dict)
@@ -53,6 +55,8 @@ async def run_generation(
     project_name: str,
     output_dir: Path,
     progress: ProgressCb | None = None,
+    enable_self_test: bool = True,
+    run_llm_review: bool = True,
 ) -> GenerationOutcome:
     emit = progress or _noop
     outcome = GenerationOutcome(success=False)
@@ -117,7 +121,38 @@ async def run_generation(
         {"stage": "validate_report", "status": "ok" if report_val.valid else "failed"}
     )
 
-    # --- Assemble (even if report has soft issues, so the user gets something) ---
+    # --- Self-test gate: test the report by itself, auto-repair, then re-test ---
+    if enable_self_test:
+        await emit({"stage": "self_test", "status": "start"})
+        from app.validation import self_test_and_repair
+
+        st = await self_test_and_repair(
+            model=model_art,
+            report=report_art,
+            profile=profile,
+            request=user_request,
+            project_name=project_name,
+            output_dir=output_dir,
+            llm=llm,
+            run_llm_review=run_llm_review,
+            progress=progress,
+        )
+        outcome.semantic_model = st.model
+        outcome.report = st.report
+        outcome.project_root = st.project_root
+        outcome.zip_path = st.zip_path
+        outcome.self_test = st.report_card
+        outcome.success = report_val.valid and st.report_card.passed
+        await emit({
+            "stage": "self_test",
+            "status": "done",
+            "passed": st.report_card.passed,
+            "success": outcome.success,
+            "remaining": [f.message for f in st.report_card.errors][:10],
+        })
+        return outcome
+
+    # --- Assemble (self-test disabled): still give the user something ---
     await emit({"stage": "assemble", "status": "start"})
     from app.assembler import assemble_pbip, zip_pbip
 
