@@ -1,0 +1,27 @@
+# Registry of selectable generation models. Adding a model is configuration, not code.
+# `id` is a LiteLLM-format "provider/model" string.
+models:
+  - id: gemini/gemini-2.5-flash
+    display_name: "Gemini 2.5 Flash"
+    provider: google
+    env_key: GEMINI_API_KEY
+    supports_structured_output: true
+    recommended: true
+
+  - id: gemini/gemini-2.5-pro
+    display_name: "Gemini 2.5 Pro"
+    provider: google
+    env_key: GEMINI_API_KEY
+    supports_structured_output: true
+
+  - id: anthropic/claude-opus-4-8
+    display_name: "Claude Opus 4.8"
+    provider: anthropic
+    env_key: ANTHROPIC_API_KEY
+    supports_structured_output: true
+
+  - id: openai/gpt-4o
+    display_name: "GPT-4o"
+    provider: openai
+    env_key: OPENAI_API_KEY
+    supports_structured_output: true
