@@ -8,7 +8,10 @@ dependencies = [
     "uvicorn[standard]>=0.30",
     "pydantic[email]>=2.7",
     "pydantic-settings>=2.3",
-    "sqlalchemy>=2.0",
+    # The app uses the async engine (AsyncSession) everywhere, which requires greenlet.
+    # The [asyncio] extra pulls it in — without it, some platforms (e.g. CPython 3.13)
+    # fail at import with "SQLAlchemy asyncio module requires ... greenlet".
+    "sqlalchemy[asyncio]>=2.0",
     "alembic>=1.13",
     "aiosqlite>=0.20",
     "asyncpg>=0.29",
