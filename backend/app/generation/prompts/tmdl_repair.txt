@@ -1,0 +1,11 @@
+The TMDL semantic model you generated has validation errors.
+
+ERRORS:
+{error_list}
+
+CURRENT CONTENT (JSON envelope of TMDL files):
+{current_content}
+
+Fix ONLY the listed errors. Do not change anything that is not implicated by an error.
+Preserve all table names, column names, measures, and partitions that are already correct.
+Return the corrected content in the SAME JSON shape as before, nothing else.

@@ -1,0 +1,23 @@
+The PBIR report you generated has validation errors.
+
+ERRORS:
+{error_list}
+
+CURRENT CONTENT (JSON):
+{current_content}
+
+Fix the listed errors. Depending on the error, the fix may be to ADD, CHANGE, or REMOVE
+content — do whatever the error asks:
+- "missing" / "the report should include ..." → ADD the requested visual (or page). Append a
+  new visual object with a real visualType and a query.queryState binding the exact
+  columns/measures named, positioned so it does not overlap existing visuals. A request for
+  "a table listing A, B, C" is a "tableEx" visual whose queryState "Values" projects columns
+  A, B, and C.
+- A visual references a measure or column that does not exist → change it to a real field
+  from the semantic model, or remove that projection.
+- Wrong visual type for the request → change "visualType".
+- A required field is missing or has the wrong type per the PBIR schema → fix it.
+- Visual positions overlap or exceed the page bounds → reposition.
+
+Keep every visual that is already correct — do not drop or restyle visuals that no error
+mentions. Return the corrected content in the SAME JSON shape as before, nothing else.

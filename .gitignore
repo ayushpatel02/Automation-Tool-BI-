@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.uv/
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+*.key
+
+# Databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Generated artifacts
+generated/
+*.pbip
+*.zip
+!backend/tests/golden/fixtures/**
+
+# Tooling / IDE
+.idea/
+.vscode/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Bundled binaries (downloaded at build time)
+tools/te2/*
+!tools/te2/.gitkeep
