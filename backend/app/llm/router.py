@@ -9,6 +9,7 @@ migration is handled inside LiteLLM.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -49,6 +50,79 @@ class LLMError(RuntimeError):
     """Raised when an LLM call fails or returns unparseable output."""
 
 
+# ---------------------------------------------------------------------------
+# Transient-error retry (provider overload, rate limits, timeouts)
+# ---------------------------------------------------------------------------
+
+# Substrings that mark a retryable, provider-side hiccup rather than a real failure.
+# Covers Gemini's "503 UNAVAILABLE / high demand", OpenAI/Anthropic overload + rate
+# limits, and generic gateway/timeout errors — matched case-insensitively on the message
+# as a fallback when LiteLLM's typed exceptions aren't importable.
+_TRANSIENT_MARKERS = (
+    "503", "500", "502", "504", "429",
+    "unavailable", "overload", "high demand", "rate limit", "ratelimit",
+    "try again", "temporarily", "timeout", "timed out", "capacity",
+    "service unavailable", "internalservererror", "connection",
+)
+
+
+def _is_transient(exc: Exception) -> bool:
+    """True if *exc* is a provider-side blip worth retrying (not a bad request/auth)."""
+    try:
+        import litellm
+
+        typed = tuple(
+            t
+            for t in (
+                getattr(litellm, "ServiceUnavailableError", None),
+                getattr(litellm, "RateLimitError", None),
+                getattr(litellm, "InternalServerError", None),
+                getattr(litellm, "Timeout", None),
+                getattr(litellm, "APIConnectionError", None),
+            )
+            if isinstance(t, type)
+        )
+        if typed and isinstance(exc, typed):
+            return True
+        # An explicit 400/401/403/404 is a real error — never retry those.
+        status = getattr(exc, "status_code", None)
+        if isinstance(status, int) and 400 <= status < 500 and status != 429:
+            return False
+    except Exception:  # noqa: BLE001 — fall back to message matching
+        pass
+    msg = str(exc).lower()
+    return any(marker in msg for marker in _TRANSIENT_MARKERS)
+
+
+async def _acompletion_with_retry(
+    *, max_retries: int = 4, base_delay: float = 2.0, model_id: str = "", **kwargs: Any
+):
+    """Call litellm.acompletion, retrying transient failures with exponential backoff.
+
+    Backoff is 2s, 4s, 8s, 16s. Non-transient errors (bad request, invalid key) raise
+    immediately. This is what lets a Gemini "503 high demand" spike self-heal instead of
+    failing the whole generation.
+    """
+    import litellm
+
+    last_exc: Exception | None = None
+    for attempt in range(max_retries + 1):
+        try:
+            return await litellm.acompletion(**kwargs)
+        except Exception as exc:  # noqa: BLE001
+            last_exc = exc
+            if attempt >= max_retries or not _is_transient(exc):
+                raise
+            delay = base_delay * (2**attempt)
+            logger.warning(
+                "Transient LLM error from %s (attempt %d/%d), retrying in %.0fs: %s",
+                model_id or kwargs.get("model", "?"), attempt + 1, max_retries,
+                delay, _excerpt(str(exc), 200),
+            )
+            await asyncio.sleep(delay)
+    raise last_exc  # pragma: no cover — loop always returns or raises above
+
+
 class LLMRouter:
     def __init__(self, model_id: str, api_key: str | None) -> None:
         self.model_id = model_id
@@ -62,19 +136,18 @@ class LLMRouter:
         temperature: float = 0.1,
         max_tokens: int = 16384,
     ) -> str:
-        import litellm
-
         try:
-            resp = await litellm.acompletion(
+            resp = await _acompletion_with_retry(
                 model=self.model_id,
                 messages=messages,
                 temperature=temperature,
                 max_tokens=max_tokens,
                 api_key=self.api_key,
+                model_id=self.model_id,
             )
             return resp.choices[0].message.content or ""
         except Exception as exc:  # noqa: BLE001
-            raise LLMError(f"LLM completion failed: {exc}") from exc
+            raise LLMError(_friendly_error(exc, self.model_id)) from exc
 
     async def complete_json(
         self,
@@ -91,8 +164,6 @@ class LLMRouter:
         multi-table schema can easily produce 10 000+ output tokens and a truncated JSON
         has no closing brace, causing the parser to fail with "Model did not return JSON".
         """
-        import litellm
-
         kwargs: dict[str, Any] = {
             "model": self.model_id,
             "messages": messages,
@@ -109,10 +180,10 @@ class LLMRouter:
             kwargs["response_format"] = {"type": "json_object"}
 
         try:
-            resp = await litellm.acompletion(**kwargs)
+            resp = await _acompletion_with_retry(model_id=self.model_id, **kwargs)
             content = resp.choices[0].message.content or ""
         except Exception as exc:  # noqa: BLE001
-            raise LLMError(f"LLM JSON completion failed: {exc}") from exc
+            raise LLMError(_friendly_error(exc, self.model_id)) from exc
 
         if not content.strip():
             # Empty content — most likely an invalid/missing API key or provider error.
@@ -122,6 +193,20 @@ class LLMRouter:
             )
 
         return _parse_json_lenient(content, model_id=self.model_id)
+
+
+def _friendly_error(exc: Exception, model_id: str) -> str:
+    """Turn a raw provider exception into a message that tells the user what to do."""
+    msg = str(exc)
+    if _is_transient(exc):
+        return (
+            f"The AI provider for {model_id} is temporarily unavailable or overloaded "
+            "(it stayed busy through several automatic retries). This is on the provider's "
+            "side — wait a minute and try again, or switch to a different model. "
+            f"Details: {_excerpt(msg, 200)}"
+        )
+    return f"LLM call failed: {msg}"
+
 
 
 # ---------------------------------------------------------------------------
