@@ -79,7 +79,11 @@ def _write_report(project_name: str, report: ReportArtifacts, root: Path) -> Non
 
     import json
 
-    report_json = report.report_json or tpl.default_report_json()
+    # version.json is REQUIRED — without it Power BI opens the report but renders no
+    # visuals. Must sit at definition/version.json.
+    (definition / "version.json").write_text(tpl.version_json(), encoding="utf-8")
+
+    report_json = tpl.finalize_report_json(report.report_json)
     (definition / "report.json").write_text(
         json.dumps(report_json, indent=2), encoding="utf-8"
     )
@@ -91,10 +95,10 @@ def _write_report(project_name: str, report: ReportArtifacts, root: Path) -> Non
         page_folder = pages_dir / page_id
         (page_folder / "visuals").mkdir(parents=True, exist_ok=True)
 
-        page_json = page.get("page_json") or tpl.default_page_json(
-            page_id, f"Page {ordinal + 1}", ordinal
+        # Guarantee every PBIR-required page field; name must equal the folder name.
+        page_json = tpl.finalize_page_json(
+            page.get("page_json"), page_id, f"Page {ordinal + 1}", ordinal
         )
-        page_json.setdefault("name", page_id)
         (page_folder / "page.json").write_text(
             json.dumps(page_json, indent=2), encoding="utf-8"
         )
@@ -102,7 +106,11 @@ def _write_report(project_name: str, report: ReportArtifacts, root: Path) -> Non
         for visual in page.get("visuals", []):
             vid = visual.get("visual_id") or str(uuid.uuid4())
             vjson = visual.get("visual_json", {})
-            vjson.setdefault("name", vid)
+            if isinstance(vjson, dict):
+                # name MUST equal the visual folder, and $schema must be a real version,
+                # or Power BI silently drops the visual.
+                vjson["name"] = vid
+                vjson["$schema"] = tpl.VISUAL_CONTAINER_SCHEMA
             vfolder = page_folder / "visuals" / vid
             vfolder.mkdir(parents=True, exist_ok=True)
             (vfolder / "visual.json").write_text(

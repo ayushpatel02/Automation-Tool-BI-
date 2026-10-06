@@ -37,7 +37,7 @@ OUTPUT FORMAT — return ONLY valid JSON in exactly this shape, nothing else:
         {
           "visual_id": "<uuid>",
           "visual_json": {
-            "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.0.0/schema.json",
+            "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.4.0/schema.json",
             "name": "<uuid>",
             "position": { "x": 20, "y": 60, "z": 0, "width": 580, "height": 340, "tabOrder": 1 },
             "visual": {

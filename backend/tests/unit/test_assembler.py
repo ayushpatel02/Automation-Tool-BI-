@@ -68,3 +68,64 @@ def test_platform_files_present(tmp_path, sample_model, valid_report):
     root = assemble_pbip("R", sample_model, valid_report, tmp_path)
     assert (root / "R.SemanticModel" / ".platform").exists()
     assert (root / "R.Report" / ".platform").exists()
+
+
+def test_pbir_required_files_and_schemas(tmp_path, sample_model, valid_report):
+    """Regression: a report that opens but renders NO visuals.
+
+    Power BI Desktop needs version.json present and valid $schema URLs on report.json,
+    pages.json, page.json and visual.json; page.json also needs displayOption. Missing
+    any of these makes it open the report yet drop every visual (blank canvas).
+    """
+    defn = assemble_pbip("R", sample_model, valid_report, tmp_path) / "R.Report" / "definition"
+
+    # version.json — REQUIRED, was missing entirely before.
+    version = json.loads((defn / "version.json").read_text())
+    assert version["version"]  # e.g. "2.0.0"
+    assert "versionMetadata" in version["$schema"]
+
+    # Every structural file carries a $schema (page.json/report.json previously did not).
+    report_json = json.loads((defn / "report.json").read_text())
+    assert "/report/" in report_json["$schema"]
+    pages_json = json.loads((defn / "pages" / "pages.json").read_text())
+    assert "/pagesMetadata/" in pages_json["$schema"]
+
+    page_json = json.loads((defn / "pages" / "ReportSection1" / "page.json").read_text())
+    assert "/page/" in page_json["$schema"]
+    assert page_json["displayOption"] == "FitToPage"   # required; must be a STRING
+    assert page_json["name"] == "ReportSection1"        # must equal the folder name
+
+    visual_json = json.loads(
+        (defn / "pages" / "ReportSection1" / "visuals" / "v1" / "visual.json").read_text()
+    )
+    assert "/visualContainer/" in visual_json["$schema"]
+    assert visual_json["name"] == "v1"                  # must equal the visual folder name
+
+
+def test_visual_and_page_names_forced_to_match_folder(tmp_path, sample_model):
+    """If the model emits a name different from the id, the folder name wins (they must match)."""
+    from app.schemas.generation import ReportArtifacts
+
+    report = ReportArtifacts(
+        report_json={},
+        pages=[{
+            "page_id": "pageA",
+            "page_json": {"name": "WRONG_PAGE_NAME", "displayName": "A"},  # mismatched
+            "visuals": [{
+                "visual_id": "visX",
+                "visual_json": {"name": "WRONG_VISUAL_NAME", "visual": {
+                    "visualType": "card",
+                    "query": {"queryState": {"Values": {"projections": [{"field": {
+                        "Measure": {"Expression": {"SourceRef": {"Entity": "Sales"}},
+                                    "Property": "Total Sales"}}}]}}},
+                }},
+            }],
+        }],
+    )
+    defn = assemble_pbip("R", sample_model, report, tmp_path) / "R.Report" / "definition"
+    page_json = json.loads((defn / "pages" / "pageA" / "page.json").read_text())
+    visual_json = json.loads(
+        (defn / "pages" / "pageA" / "visuals" / "visX" / "visual.json").read_text()
+    )
+    assert page_json["name"] == "pageA"     # folder name wins, not "WRONG_PAGE_NAME"
+    assert visual_json["name"] == "visX"    # folder name wins, not "WRONG_VISUAL_NAME"

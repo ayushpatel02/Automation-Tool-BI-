@@ -226,52 +226,31 @@ def test_missing_server_file_still_gets_absolute_placeholder(tmp_path):
     assert data_files == {}  # can't bundle it either — no data_files entry
 
 
-def test_preflight_flags_relative_file_contents():
-    """A File.Contents with a non-absolute path must be caught by the linter."""
+def test_lint_does_not_flag_relative_file_contents_before_patching():
+    """A relative File.Contents must NOT fail validation — it's the expected pre-patch state.
+
+    Regression: an earlier linter flagged relative File.Contents as an error. But model
+    validation runs BEFORE patch_file_sources embeds the data, so flagging it there made
+    the model-validation retry loop "repair" it by inventing bogus absolute paths like
+    C:\\Data\\<uuid>.csv. patch_file_sources is the real guarantee; the linter must stay out
+    of it.
+    """
     from app.schemas.generation import SemanticModelArtifacts
     from app.validation.preflight import lint_model
 
-    table_with_relative_path = (
-        "table StockData\n"
-        "\tcolumn id\n"
-        "\t\tdataType: int64\n"
-        "\tpartition StockData = m\n"
-        "\t\tmode: import\n"
-        '\t\tsource = let Source = Csv.Document(File.Contents("StockData.csv"), '
-        '[Delimiter=","]) in Source\n'
-    )
     model = SemanticModelArtifacts(
         model_tmdl="model M\n",
-        tables={"StockData.tmdl": table_with_relative_path},
+        tables={"StockData.tmdl": (
+            "table StockData\n"
+            "\tcolumn id\n\t\tdataType: int64\n"
+            "\tpartition StockData = m\n\t\tmode: import\n"
+            '\t\tsource = let Source = Csv.Document(File.Contents("StockData.csv"), '
+            '[Delimiter=","]) in Source\n'
+        )},
     )
     findings = lint_model(model)
-    assert any(f.category == "tmdl.file_path" for f in findings), [
-        f.category for f in findings
-    ]
-
-
-def test_preflight_does_not_flag_windows_absolute_file_contents():
-    """C:\\PowerBI-Data\\... is a valid absolute path and must NOT be flagged."""
-    from app.schemas.generation import SemanticModelArtifacts
-    from app.validation.preflight import lint_model
-
-    table_with_abs_path = (
-        "table StockData\n"
-        "\tcolumn id\n"
-        "\t\tdataType: int64\n"
-        "\tpartition StockData = m\n"
-        "\t\tmode: import\n"
-        '\t\tsource = let Source = Csv.Document(File.Contents("C:\\\\PowerBI-Data\\\\StockData.csv"), '
-        '[Delimiter=","]) in Source\n'
-    )
-    model = SemanticModelArtifacts(
-        model_tmdl="model M\n",
-        tables={"StockData.tmdl": table_with_abs_path},
-    )
-    findings = lint_model(model)
-    assert not any(f.category == "tmdl.file_path" for f in findings), [
-        f.message for f in findings if f.category == "tmdl.file_path"
-    ]
+    assert not any(f.category == "tmdl.file_path" for f in findings)
+    assert not [f for f in findings if f.severity == "error"], [f.message for f in findings]
 
 
 def test_b64_len_predicts_base64_growth():

@@ -12,7 +12,7 @@ _PROMPTS = Path(__file__).parent / "prompts"
 
 _VISUAL_CONTAINER_SCHEMA = (
     "https://developer.microsoft.com/json-schemas/fabric/item/report/"
-    "definition/visualContainer/2.0.0/schema.json"
+    "definition/visualContainer/2.4.0/schema.json"
 )
 
 # PBIR response envelope schema. NOTE: this is intentionally NOT used for structured-output
@@ -67,7 +67,7 @@ def _column_projection(entity: str, prop: str, active: bool = False) -> dict:
 
 _VISUAL_EXAMPLE = json.dumps(
     {
-        "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.0.0/schema.json",
+        "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.4.0/schema.json",
         "name": "550e8400-e29b-41d4-a716-446655440001",
         "position": {"x": 20, "y": 60, "z": 0, "width": 580, "height": 340, "tabOrder": 1},
         "visual": {
@@ -103,7 +103,7 @@ _VISUAL_EXAMPLE = json.dumps(
 # listing X, Y, Z" — without this example the model tends to emit only charts.
 _TABLE_EXAMPLE = json.dumps(
     {
-        "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.0.0/schema.json",
+        "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.4.0/schema.json",
         "name": "550e8400-e29b-41d4-a716-446655440002",
         "position": {"x": 20, "y": 60, "z": 0, "width": 1240, "height": 360, "tabOrder": 1},
         "visual": {

@@ -30,7 +30,7 @@ PROJECT = "GlobalStockIndexOverview"
 ENTITY = "StockIndex"
 VC_SCHEMA = (
     "https://developer.microsoft.com/json-schemas/fabric/item/report/"
-    "definition/visualContainer/2.0.0/schema.json"
+    "definition/visualContainer/2.4.0/schema.json"
 )
 
 
