@@ -38,7 +38,7 @@ def test_model_registry_has_recommended():
 
 
 def test_model_config_lookup():
-    cfg = model_config("gemini/gemini-2.5-flash")
+    cfg = model_config("gemini/gemini-3.5-flash")
     assert cfg["provider"] == "google"
 
 
@@ -103,7 +103,7 @@ async def test_retry_recovers_from_transient_503(monkeypatch):
         return None
     monkeypatch.setattr(router.asyncio, "sleep", _no_sleep)
 
-    llm = LLMRouter("gemini/gemini-2.5-flash", api_key="k")
+    llm = LLMRouter("gemini/gemini-3.5-flash", api_key="k")
     result = await llm.complete_json([{"role": "user", "content": "hi"}])
     assert result == {"ok": True}
     assert calls["n"] == 3  # failed twice, succeeded on the third
@@ -122,7 +122,7 @@ async def test_non_transient_error_is_not_retried(monkeypatch):
         return None
     monkeypatch.setattr(router.asyncio, "sleep", _no_sleep)
 
-    llm = LLMRouter("gemini/gemini-2.5-flash", api_key="k")
+    llm = LLMRouter("gemini/gemini-3.5-flash", api_key="k")
     with pytest.raises(LLMError):
         await llm.complete_json([{"role": "user", "content": "hi"}])
     assert calls["n"] == 1  # no retry
@@ -138,7 +138,7 @@ async def test_persistent_transient_error_raises_friendly_message(monkeypatch):
         return None
     monkeypatch.setattr(router.asyncio, "sleep", _no_sleep)
 
-    llm = LLMRouter("gemini/gemini-2.5-flash", api_key="k")
+    llm = LLMRouter("gemini/gemini-3.5-flash", api_key="k")
     with pytest.raises(LLMError) as ei:
         await llm.complete_json([{"role": "user", "content": "hi"}])
     assert "temporarily unavailable" in str(ei.value).lower()

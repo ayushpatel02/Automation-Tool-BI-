@@ -160,14 +160,14 @@ async def test_diagnose_error(client, monkeypatch):
         "/diagnostics",
         headers=headers,
         json={
-            "model_id": "gemini/gemini-2.5-flash",
+            "model_id": "gemini/gemini-3.5-flash",
             "error_text": "Column 'Foo' not found in table 'Sales'",
             "context": "Generating a sales report",
         },
     )
     assert r.status_code == 200
     body = r.json()
-    assert body["model_id"] == "gemini/gemini-2.5-flash"
+    assert body["model_id"] == "gemini/gemini-3.5-flash"
     assert "Likely cause" in body["answer"]
 
 
@@ -175,7 +175,7 @@ async def test_diagnose_error(client, monkeypatch):
 async def test_diagnose_error_requires_auth(client):
     r = await client.post(
         "/diagnostics",
-        json={"model_id": "gemini/gemini-2.5-flash", "error_text": "boom"},
+        json={"model_id": "gemini/gemini-3.5-flash", "error_text": "boom"},
     )
     assert r.status_code in (401, 403)
 
@@ -211,7 +211,7 @@ async def test_diagnose_error_with_image(client, monkeypatch):
         "/diagnostics",
         headers=headers,
         json={
-            "model_id": "gemini/gemini-2.5-flash",
+            "model_id": "gemini/gemini-3.5-flash",
             "error_text": "",
             "image_base64": tiny_png,
             "image_media_type": "image/png",
@@ -244,6 +244,6 @@ async def test_diagnose_error_requires_text_or_image(client):
     r = await client.post(
         "/diagnostics",
         headers=headers,
-        json={"model_id": "gemini/gemini-2.5-flash", "error_text": ""},
+        json={"model_id": "gemini/gemini-3.5-flash", "error_text": ""},
     )
     assert r.status_code == 400
