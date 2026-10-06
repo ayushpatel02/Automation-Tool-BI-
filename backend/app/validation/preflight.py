@@ -332,6 +332,7 @@ def lint_tree(project_root: Path) -> list[PreflightFinding]:
         else:
             findings += _check_schema(pbir)
             findings += _check_dataset_reference(pbir, project_root)
+            findings += _check_pbir_version(pbir)
         if not (rep / ".platform").exists():
             missing(f"{rep.name}/.platform", "Missing .platform metadata file.")
         if not (rep / "definition" / "report.json").exists():
@@ -374,6 +375,34 @@ def _check_schema(path: Path) -> list[PreflightFinding]:
                 message=f"{path.name} has an unexpected $schema ({schema!r}); "
                 f"Power BI may reject the project.",
                 file=path.name,
+            )
+        ]
+    return []
+
+
+def _check_pbir_version(pbir: Path) -> list[PreflightFinding]:
+    """definition.pbir version must be >= 4.0 or Power BI ignores the pages/ folder.
+
+    A lower version marks the report as the legacy single-file format, so Power BI opens
+    a blank 'Page 1' and silently drops every generated page/visual — no error shown.
+    """
+    try:
+        version = str(json.loads(pbir.read_text(encoding="utf-8")).get("version", ""))
+    except (json.JSONDecodeError, OSError):
+        return []
+    try:
+        major = int(version.split(".")[0])
+    except (ValueError, IndexError):
+        major = 0
+    if major < 4:
+        return [
+            PreflightFinding(
+                category="structure.pbir_version",
+                message=(
+                    f"definition.pbir version {version!r} is below 4.0; Power BI will "
+                    "ignore the pages/ folder and open a blank report. Use version 4.0."
+                ),
+                file=pbir.name,
             )
         ]
     return []

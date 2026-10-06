@@ -47,10 +47,14 @@ def platform_file(display_name: str, item_type: str) -> str:
 
 
 def definition_pbir(project_name: str) -> str:
+    # version MUST be "4.0" or higher — that is what tells Power BI the report is stored
+    # in the PBIR *definition-folder* format (pages/). With the old "1.0" value Power BI
+    # treats it as a legacy single-file report, ignores the pages/ folder entirely, and
+    # opens a blank "Page 1". definitionProperties schema is 2.0.0.
     return json.dumps(
         {
-            "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definitionProperties/1.0.0/schema.json",
-            "version": "1.0",
+            "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definitionProperties/2.0.0/schema.json",
+            "version": "4.0",
             "datasetReference": {
                 "byPath": {"path": f"../{project_name}.SemanticModel"},
             },
