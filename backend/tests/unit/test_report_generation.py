@@ -100,6 +100,23 @@ def test_normalize_leaves_well_formed_visual_intact():
     assert out["visual"]["query"] == {"queryState": {"Y": {}}}
 
 
+def test_normalize_adds_native_query_ref_and_drill_filter():
+    """Match real Power BI output: projections get nativeQueryRef; visual gets drill flag."""
+    vjson = {
+        "name": "v1",
+        "visual": {
+            "visualType": "card",
+            "query": {"queryState": {"Values": {"projections": [{"field": {
+                "Measure": {"Expression": {"SourceRef": {"Entity": "Sales"}},
+                            "Property": "Total Sales"}}}]}}},
+        },
+    }
+    out = report_gen._normalize_visual(vjson)
+    proj = out["visual"]["query"]["queryState"]["Values"]["projections"][0]
+    assert proj["nativeQueryRef"] == "Total Sales"
+    assert out["visual"]["drillFilterOtherVisuals"] is True
+
+
 def test_parse_artifacts_normalizes_every_visual():
     raw = {
         "report_json": {},

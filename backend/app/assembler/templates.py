@@ -116,24 +116,22 @@ def version_json() -> str:
 
 
 def default_report_json() -> dict:
-    return {
-        "$schema": REPORT_SCHEMA,
-        "themeCollection": {"baseTheme": {"name": "CY24SU10"}},
-        "settings": {},
-    }
+    return {"$schema": REPORT_SCHEMA}
 
 
 def finalize_report_json(report_json: dict | None) -> dict:
-    """Guarantee report.json carries the correct $schema and baseline keys.
+    """Guarantee report.json carries the correct $schema, with no unresolved references.
 
     The report-level JSON is model-generated and often omits $schema (or pins a stale
-    version), which makes Power BI reject the report definition. Force the known-good
-    schema and fill any missing baseline keys without discarding the model's content.
+    version). Force the known-good schema. Crucially, drop any themeCollection /
+    resourcePackages: a baseTheme referenced without a matching resourcePackages entry
+    makes Power BI Desktop fail to load the whole report. With no theme declared, Power
+    BI applies its built-in default theme.
     """
     rj = dict(report_json or {})
-    rj["$schema"] = REPORT_SCHEMA  # force — the model's value is unreliable here
-    rj.setdefault("themeCollection", {"baseTheme": {"name": "CY24SU10"}})
-    rj.setdefault("settings", {})
+    rj.pop("themeCollection", None)
+    rj.pop("resourcePackages", None)
+    rj["$schema"] = REPORT_SCHEMA
     return rj
 
 

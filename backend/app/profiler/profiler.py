@@ -195,13 +195,31 @@ def _count_rows(conn, text, tname, schema) -> int:
 
 # --- File path -------------------------------------------------------------
 
+def _safe_table_name(name: str) -> str:
+    """A TMDL/Power BI-safe table name: alphanumeric/underscore, not starting with a digit.
+
+    Uploaded files are stored on the server under a random UUID filename, so deriving the
+    table name from that stem produced names like '09654de7...' — meaningless and, because
+    they start with a digit, invalid as unquoted identifiers (visual field bindings against
+    them silently fail). Prefer the original upload name and sanitize it.
+    """
+    cleaned = re.sub(r"[^A-Za-z0-9_]", "_", name).strip("_")
+    if not cleaned:
+        cleaned = "Data"
+    if cleaned[0].isdigit():
+        cleaned = f"T_{cleaned}"
+    return cleaned
+
+
 def _profile_file(
     connector: FileConnector, max_columns_per_table: int, sample_rows: int
 ) -> SchemaProfile:
     import pandas as pd
 
     path = connector.file_path
-    table_name = re.sub(r"[^A-Za-z0-9_]", "_", path.stem)
+    # Name the table after the ORIGINAL uploaded file, not the server's UUID filename.
+    display = connector.config.extra.get("original_name") or path.name
+    table_name = _safe_table_name(display.rsplit(".", 1)[0])
     if connector.config.type.value == "excel":
         df = pd.read_excel(path, nrows=1000)
     else:

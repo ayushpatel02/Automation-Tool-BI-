@@ -263,6 +263,20 @@ def test_b64_len_predicts_base64_growth():
         assert sm._b64_len(n) == len(_b64.b64encode(b"x" * n).decode())
 
 
+def test_safe_table_name_avoids_digit_leading_uuid():
+    """A table name must be a valid identifier — not the digit-leading server UUID."""
+    from app.profiler.profiler import _safe_table_name
+
+    # Server UUID stem starts with a digit -> invalid identifier; must be prefixed.
+    assert _safe_table_name("09654de7ea4a483d8ff8e366d1cfb820").startswith("T_")
+    # Spaces / punctuation -> underscores; keeps a human-readable name.
+    assert _safe_table_name("Superstore Sales 2024") == "Superstore_Sales_2024"
+    assert _safe_table_name("Test-Data") == "Test_Data"
+    # Empty / all-punctuation -> a safe fallback.
+    assert _safe_table_name("") == "Data"
+    assert _safe_table_name("!!!") == "Data"
+
+
 def test_no_file_sources_is_a_noop():
     profile = SchemaProfile(
         source_type="postgresql", database="db",

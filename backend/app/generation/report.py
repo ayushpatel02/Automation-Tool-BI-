@@ -221,6 +221,26 @@ def _normalize_visual(vjson: dict) -> dict:
 
     if visual:
         vjson["visual"] = visual
+
+    # Match real Power BI output: each projection carries a nativeQueryRef (its property
+    # name), and the visual declares drillFilterOtherVisuals. Missing these leaves visuals
+    # under-specified vs a Desktop-authored report.
+    if isinstance(visual.get("query"), dict):
+        query_state = visual["query"].get("queryState")
+        if isinstance(query_state, dict):
+            for role in query_state.values():
+                if not isinstance(role, dict):
+                    continue
+                for proj in role.get("projections", []) or []:
+                    if not isinstance(proj, dict):
+                        continue
+                    field = proj.get("field", {}) if isinstance(proj.get("field"), dict) else {}
+                    for kind in ("Measure", "Column"):
+                        ref = field.get(kind)
+                        if isinstance(ref, dict) and ref.get("Property"):
+                            proj.setdefault("nativeQueryRef", ref["Property"])
+            visual.setdefault("drillFilterOtherVisuals", True)
+
     vjson.setdefault("$schema", _VISUAL_CONTAINER_SCHEMA)
     return vjson
 

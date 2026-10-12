@@ -102,6 +102,20 @@ def test_pbir_required_files_and_schemas(tmp_path, sample_model, valid_report):
     assert visual_json["name"] == "v1"                  # must equal the visual folder name
 
 
+def test_report_json_has_no_unresolved_theme(tmp_path, sample_model, valid_report):
+    """report.json must not reference a base theme it doesn't register.
+
+    A themeCollection pointing at a baseTheme with no matching resourcePackages entry
+    makes Power BI Desktop fail to load the whole report. We ship no theme (Power BI uses
+    its default) to stay safe.
+    """
+    defn = assemble_pbip("R", sample_model, valid_report, tmp_path) / "R.Report" / "definition"
+    report_json = json.loads((defn / "report.json").read_text())
+    assert "/report/" in report_json["$schema"]
+    assert "themeCollection" not in report_json
+    assert "resourcePackages" not in report_json
+
+
 def test_visual_and_page_names_forced_to_match_folder(tmp_path, sample_model):
     """If the model emits a name different from the id, the folder name wins (they must match)."""
     from app.schemas.generation import ReportArtifacts
