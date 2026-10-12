@@ -20,7 +20,7 @@ VERSION_METADATA_SCHEMA = f"{_DEF_BASE}/versionMetadata/1.0.0/schema.json"
 REPORT_SCHEMA = f"{_DEF_BASE}/report/3.0.0/schema.json"
 PAGES_METADATA_SCHEMA = f"{_DEF_BASE}/pagesMetadata/1.0.0/schema.json"
 PAGE_SCHEMA = f"{_DEF_BASE}/page/2.0.0/schema.json"
-VISUAL_CONTAINER_SCHEMA = f"{_DEF_BASE}/visualContainer/2.4.0/schema.json"
+VISUAL_CONTAINER_SCHEMA = f"{_DEF_BASE}/visualContainer/2.7.0/schema.json"
 
 
 def pbip_entry(project_name: str) -> str:
@@ -116,22 +116,35 @@ def version_json() -> str:
 
 
 def default_report_json() -> dict:
-    return {"$schema": REPORT_SCHEMA}
+    return finalize_report_json(None)
 
 
 def finalize_report_json(report_json: dict | None) -> dict:
-    """Guarantee report.json carries the correct $schema, with no unresolved references.
+    """Produce a report.json matching a real Power BI Desktop-saved report.
 
-    The report-level JSON is model-generated and often omits $schema (or pins a stale
-    version). Force the known-good schema. Crucially, drop any themeCollection /
-    resourcePackages: a baseTheme referenced without a matching resourcePackages entry
-    makes Power BI Desktop fail to load the whole report. With no theme declared, Power
-    BI applies its built-in default theme.
+    A real report declares the base theme with ``type: SharedResources`` AND registers it
+    in ``resourcePackages`` (referencing a theme without registering it, OR shipping no
+    report-level keys at all, both make Desktop fail to load the report). We mirror that
+    exact shape with empty defaults for the other required top-level keys, discarding any
+    unreliable model-supplied theme/resource content.
     """
     rj = dict(report_json or {})
-    rj.pop("themeCollection", None)
-    rj.pop("resourcePackages", None)
+    for key in ("themeCollection", "resourcePackages", "filterConfig",
+                "objects", "settings", "annotations"):
+        rj.pop(key, None)
     rj["$schema"] = REPORT_SCHEMA
+    rj["themeCollection"] = {"baseTheme": {"name": "CY24SU10", "type": "SharedResources"}}
+    rj["resourcePackages"] = [
+        {
+            "name": "SharedResources",
+            "type": "SharedResources",
+            "items": [{"name": "CY24SU10", "path": "BaseThemes/CY24SU10.json", "type": "BaseTheme"}],
+        }
+    ]
+    rj["filterConfig"] = {"filters": []}
+    rj["objects"] = {}
+    rj["settings"] = {}
+    rj["annotations"] = []
     return rj
 
 
