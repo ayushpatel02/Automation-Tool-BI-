@@ -128,33 +128,34 @@ _in_progress = st.session_state.get("_gen_in_progress", False)
 if _in_progress:
     done_ev: threading.Event = st.session_state["_gen_done"]
 
-    hdr_col, stop_col = st.columns([5, 1])
-    hdr_col.subheader("Generating…")
-    if stop_col.button("Stop", type="secondary", key="stop_gen"):
-        st.session_state["_gen_stop"].set()
-        st.session_state["_gen_in_progress"] = False
-        st.session_state["_gen_cancelled"] = True
-        st.rerun()
-
-    with st.status("Working…", expanded=True):
-        _draw_progress(st.empty())
-
     if done_ev.is_set():
+        # Finished: flip state and fall through to the results section THIS run (so the
+        # download tabs render immediately instead of waiting for another interaction).
         st.session_state["_gen_in_progress"] = False
+        _in_progress = False
         sid = st.session_state.get("_gen_session_id", "")
-        if sid:
-            try:
-                final = client.get_session(sid)
-                if final["status"] == "complete":
-                    st.success("Report generated and validated.")
-                elif final.get("has_download"):
-                    st.warning("Report generated but didn't pass every check — see the "
-                               "**Self-test** tab below.")
-                else:
-                    st.error(final.get("error_message") or "Generation failed.")
-            except ApiError as exc:
-                st.error(str(exc))
+        try:
+            final = client.get_session(sid) if sid else {}
+            if final.get("status") == "complete":
+                st.success("Report generated and validated.")
+            elif final.get("has_download"):
+                st.warning("Report generated but didn't pass every check — see the "
+                           "**Self-test** tab below.")
+            else:
+                st.error(final.get("error_message") or "Generation failed.")
+        except ApiError as exc:
+            st.error(str(exc))
     else:
+        # Still running: show live progress + a Stop button, then poll again.
+        hdr_col, stop_col = st.columns([5, 1])
+        hdr_col.subheader("Generating…")
+        if stop_col.button("Stop", type="secondary", key="stop_gen"):
+            st.session_state["_gen_stop"].set()
+            st.session_state["_gen_in_progress"] = False
+            st.session_state["_gen_cancelled"] = True
+            st.rerun()
+        with st.status("Working…", expanded=True):
+            _draw_progress(st.empty())
         time.sleep(0.5)
         st.rerun()
 
