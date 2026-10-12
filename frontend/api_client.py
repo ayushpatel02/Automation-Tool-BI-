@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any, Iterator
+from collections.abc import Iterator
+from typing import Any
 
 import httpx
 
@@ -66,6 +67,9 @@ class ApiClient:
 
     def list_connectors(self) -> list[dict]:
         return self._get("/connectors")
+
+    def delete_connector(self, credential_id: str) -> None:
+        self._request("DELETE", f"/connectors/{credential_id}")
 
     def upload_file(self, name: str, content: bytes, mime: str) -> dict:
         """Upload a CSV/Excel file; returns {file_path, connector_type, ...}."""

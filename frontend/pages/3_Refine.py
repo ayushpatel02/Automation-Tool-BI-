@@ -3,17 +3,18 @@
 from __future__ import annotations
 
 import streamlit as st
-
 from api_client import ApiClient, ApiError
 from components.auth import ensure_authenticated
+from components.layout import render_sidebar
 from components.preview import render_preview
 
 client: ApiClient = ensure_authenticated()
-st.title("3 · Refine the report")
+render_sidebar(client, active="refine")
+st.title("💬 Refine the report")
 
 session_id = st.session_state.get("session_id")
 if not session_id:
-    st.warning("Generate a report first (see the **Generate** page).")
+    st.warning("Generate a report first — open the **Generate** page in the sidebar.", icon="👈")
     st.stop()
 
 st.caption(f"Editing session `{session_id}`")

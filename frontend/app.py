@@ -1,42 +1,51 @@
-"""Streamlit entrypoint. Auth gate + simple navigation across the workflow pages."""
+"""Streamlit entrypoint. Auth gate + a clean home with the workflow at a glance."""
 
 from __future__ import annotations
 
 import streamlit as st
-
 from components.auth import ensure_authenticated
+from components.layout import render_sidebar
+from components.sources import get_sources
 
 st.set_page_config(page_title="AI Power BI Generator", page_icon="📊", layout="wide")
 
 client = ensure_authenticated()
+render_sidebar(client, active="home")
 
-st.sidebar.success(f"Signed in as {st.session_state.get('email', 'user')}")
-if st.sidebar.button("Log out"):
-    for key in ("token", "email", "session_id", "connectors", "project_name"):
-        st.session_state.pop(key, None)
-    st.rerun()
+st.title("📊 Power BI Report Generator")
+st.caption("Describe the report you want in plain English — get a ready-to-open Power BI project.")
 
-st.title("📊 AI-Powered Power BI Report Generator")
-st.markdown(
-    """
-Welcome! This tool generates a valid Power BI project (`.pbip`) from a natural-language
-description of the report you want.
+sources = get_sources(client)
 
-**Workflow** (use the pages in the sidebar):
-1. **Connect** — point the tool at one or more data sources (SQL databases, warehouses, or
-   CSV/Excel files). Multiple sources are combined into a single schema.
-2. **Generate** — choose an AI model, describe your report, preview the layout, and download the `.pbip`.
-3. **Refine** — iteratively edit the generated report through AI chat (with undo).
-4. **Settings** — optionally store your own AI provider API key (encrypted per user).
-
-> Open the downloaded project in **Power BI Desktop (March 2026 or later, PBIR preview
-> enabled)** to view and hand-edit it.
-"""
-)
-
-connectors = st.session_state.get("connectors") or []
-if connectors:
-    names = ", ".join(f"**{c.get('name', 'unnamed')}**" for c in connectors)
-    st.info(f"Active data source{'s' if len(connectors) > 1 else ''}: {names}")
+# A compact "what next" banner that adapts to where the user is in the flow.
+if not sources:
+    st.info("**Start here:** open the **Connect** page in the sidebar to add your first data "
+            "source (a CSV/Excel file or a database).", icon="👈")
 else:
-    st.warning("No data source connected yet — start on the **Connect** page.")
+    names = ", ".join(f"**{s['name']}**" for s in sources)
+    st.success(f"{len(sources)} data source{'s' if len(sources) > 1 else ''} ready: {names}", icon="✅")
+    st.caption("Your sources are saved to your account — no need to re-upload next time.")
+
+st.markdown("")
+
+# Three-step workflow as tidy cards instead of a wall of text.
+c1, c2, c3 = st.columns(3)
+with c1:
+    st.subheader("1 · Connect")
+    st.write("Add a CSV/Excel file or a database. Multiple sources combine into one model.")
+with c2:
+    st.subheader("2 · Generate")
+    st.write("Pick an AI model, describe your report, and download the `.pbip` project.")
+with c3:
+    st.subheader("3 · Refine")
+    st.write("Tweak the report through AI chat — change charts, add measures, undo anytime.")
+
+st.markdown("")
+with st.expander("Opening the report in Power BI Desktop"):
+    st.markdown(
+        "- Use **Power BI Desktop (March 2026 or later)** with the **PBIR** preview option "
+        "enabled (File → Options → Preview features).\n"
+        "- Your uploaded data is compressed and embedded in the project, so it opens and "
+        "loads with no file paths to fix.\n"
+        "- Set your own AI provider key (optional) on the **Settings** page."
+    )

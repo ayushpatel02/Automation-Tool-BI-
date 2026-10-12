@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import streamlit as st
-
 from api_client import ApiClient, ApiError
 from components.auth import ensure_authenticated
+from components.layout import render_sidebar
 
 client: ApiClient = ensure_authenticated()
+render_sidebar(client, active="settings")
 st.title("⚙ Settings · API keys")
 
 st.markdown(

@@ -7,21 +7,21 @@ import threading
 import time
 
 import streamlit as st
-
 from api_client import ApiClient, ApiError
 from components.auth import ensure_authenticated
+from components.layout import render_sidebar
 from components.preview import render_preview
+from components.sources import get_sources
 
 client: ApiClient = ensure_authenticated()
-st.title("2 · Generate a report")
+render_sidebar(client, active="generate")
 
-connectors = st.session_state.get("connectors") or []
+st.title("✨ Generate a report")
+
+connectors = get_sources(client)
 if not connectors:
-    st.warning("Connect a data source first (see the **Connect** page).")
+    st.warning("Add a data source first — open the **Connect** page in the sidebar.", icon="👈")
     st.stop()
-
-source_names = ", ".join(f"**{c['name']}**" for c in connectors)
-st.caption(f"Data source{'s' if len(connectors) > 1 else ''}: {source_names}")
 
 try:
     models = client.list_models()
@@ -33,16 +33,21 @@ model_labels = {
     f"{m['display_name']}{' (recommended)' if m.get('recommended') else ''}": m["id"]
     for m in models
 }
-model_label = st.selectbox("AI model", list(model_labels.keys()))
-model_id = model_labels[model_label]
 
-project_name = st.text_input("Project name", value="GeneratedReport")
+# ── Inputs ────────────────────────────────────────────────────────────────────
+source_names = ", ".join(f"**{c['name']}**" for c in connectors)
+st.caption(f"Using data from: {source_names}")
+
 request = st.text_area(
     "Describe the report you want",
-    placeholder="e.g. A sales dashboard with total revenue, top 10 products by revenue, "
-    "and a monthly revenue trend line.",
-    height=120,
+    placeholder="e.g. A sales dashboard with total revenue and profit as cards, sales by "
+    "category as a bar chart, and a monthly revenue trend line.",
+    height=110,
 )
+with st.expander("Options"):
+    model_label = st.selectbox("AI model", list(model_labels.keys()))
+    project_name = st.text_input("Project name", value="GeneratedReport")
+model_id = model_labels[model_label]
 
 
 # ── Streaming helpers ───────────────────────────────────────────────────────
@@ -97,7 +102,7 @@ def _start_stream(session_id: str) -> None:
                 if stop_ev.is_set():
                     break
                 events.append(ev)
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001, S110 — bg thread must never crash the UI
             pass
         finally:
             done_ev.set()
@@ -117,31 +122,24 @@ def _draw_progress(log_placeholder) -> None:
     log_placeholder.markdown("\n\n".join(lines) if lines else "_Starting…_")
 
 
-# ── Streaming state machine ─────────────────────────────────────────────────
-# This runs at the TOP of each Streamlit script execution.
-# While _gen_in_progress is True the page auto-reruns every 0.5 s so the
-# stop button is rendered and events accumulate in the live log.
-
+# ── Streaming state machine (runs at top of each rerun) ───────────────────────
 _in_progress = st.session_state.get("_gen_in_progress", False)
 
 if _in_progress:
     done_ev: threading.Event = st.session_state["_gen_done"]
 
     hdr_col, stop_col = st.columns([5, 1])
-    with hdr_col:
-        st.subheader("Generating…")
-    with stop_col:
-        if st.button("Stop", type="secondary", key="stop_gen"):
-            st.session_state["_gen_stop"].set()
-            st.session_state["_gen_in_progress"] = False
-            st.session_state["_gen_cancelled"] = True
-            st.rerun()
+    hdr_col.subheader("Generating…")
+    if stop_col.button("Stop", type="secondary", key="stop_gen"):
+        st.session_state["_gen_stop"].set()
+        st.session_state["_gen_in_progress"] = False
+        st.session_state["_gen_cancelled"] = True
+        st.rerun()
 
-    log_ph = st.empty()
-    _draw_progress(log_ph)
+    with st.status("Working…", expanded=True):
+        _draw_progress(st.empty())
 
     if done_ev.is_set():
-        # Stream finished — transition out of in-progress state
         st.session_state["_gen_in_progress"] = False
         sid = st.session_state.get("_gen_session_id", "")
         if sid:
@@ -150,141 +148,123 @@ if _in_progress:
                 if final["status"] == "complete":
                     st.success("Report generated and validated.")
                 elif final.get("has_download"):
-                    st.warning(
-                        "Report generated but did not fully pass all checks — "
-                        "review the self-test results below."
-                    )
+                    st.warning("Report generated but didn't pass every check — see the "
+                               "**Self-test** tab below.")
                 else:
                     st.error(final.get("error_message") or "Generation failed.")
             except ApiError as exc:
                 st.error(str(exc))
     else:
-        # Not done yet: pause then rerun to refresh the log and keep stop button live
         time.sleep(0.5)
         st.rerun()
 
 elif st.session_state.get("_gen_cancelled"):
-    st.info("Generation stopped. The server is still completing the run in the background — "
-            "check back shortly or click Re-test once a download appears.")
+    st.info("Generation stopped. The server may still be finishing in the background — "
+            "check back shortly.")
 
-# ── Generate button (hidden while generating) ────────────────────────────────
-if not _in_progress and not st.session_state.get("_gen_cancelled"):
-    if st.button("Generate report", type="primary", disabled=not request.strip()):
-        body = {
-            "model_id": model_id,
-            "request": request,
-            "credential_ids": [
-                c["credential_id"] for c in connectors if c.get("credential_id")
-            ],
-            "project_name": project_name,
-        }
-        try:
-            session = client.create_session(body)
-        except ApiError as exc:
-            st.error(str(exc))
-            st.stop()
-        st.session_state["session_id"] = session["id"]
-        st.session_state["project_name"] = project_name
-        _start_stream(session["id"])
-        st.rerun()
+# ── Generate button ───────────────────────────────────────────────────────────
+_show_generate = not _in_progress and not st.session_state.get("_gen_cancelled")
+if _show_generate and st.button(
+    "✨ Generate report", type="primary", disabled=not request.strip(),
+    use_container_width=True,
+):
+    body = {
+        "model_id": model_id,
+        "request": request,
+        "credential_ids": [c["credential_id"] for c in connectors if c.get("credential_id")],
+        "project_name": project_name,
+    }
+    try:
+        session = client.create_session(body)
+    except ApiError as exc:
+        st.error(str(exc))
+        st.stop()
+    st.session_state["session_id"] = session["id"]
+    st.session_state["project_name"] = project_name
+    _start_stream(session["id"])
+    st.rerun()
 
 
-# ── Results section ──────────────────────────────────────────────────────────
+# ── Results ───────────────────────────────────────────────────────────────────
 
 def _render_self_test(st_data: dict) -> None:
-    passed = st_data.get("passed", False)
     layers = st_data.get("layers_run", [])
     findings = st_data.get("findings", [])
     auto_fixed = st_data.get("auto_fixed", [])
     attempts = st_data.get("attempts", 1)
-
     errors = [f for f in findings if f.get("severity") == "error"]
     warnings = [f for f in findings if f.get("severity") == "warning"]
 
-    if passed:
-        st.success(f"Self-test passed — all {len(layers)} layer(s) clean.")
+    if st_data.get("passed"):
+        st.success(f"Passed — all {len(layers)} layer(s) clean.")
     else:
-        st.error(
-            f"Self-test found {len(errors)} error(s)"
-            + (f" and {len(warnings)} warning(s)." if warnings else ".")
-        )
+        st.error(f"Found {len(errors)} error(s)"
+                 + (f" and {len(warnings)} warning(s)." if warnings else "."))
 
     layer_labels = {"deterministic": "Linter", "te2": "TE2 compile", "llm_review": "LLM review"}
-    ran_set = set(layers)
-    badge_parts = [
-        (f"✓ `{lbl}`" if key in ran_set else f"– `{lbl}` (skipped)")
-        for key, lbl in layer_labels.items()
-    ]
-    st.caption("Layers: " + "  ·  ".join(badge_parts))
+    ran = set(layers)
+    st.caption("Layers: " + "  ·  ".join(
+        (f"✓ {lbl}" if k in ran else f"– {lbl} (skipped)") for k, lbl in layer_labels.items()
+    ) + (f"   ·   auto-repair ×{attempts}" if attempts > 1 else ""))
 
-    if attempts > 1:
-        st.caption(f"Auto-repair ran {attempts} attempt(s).")
+    def _list(items, title, expanded):
+        with st.expander(f"{title} ({len(items)})", expanded=expanded):
+            for f in items:
+                loc = f"`{f['file']}` " if f.get("file") else ""
+                st.markdown(f"- {loc}**{f.get('category', '')}**: {f['message']}")
 
     if auto_fixed:
-        with st.expander(f"Auto-fixes applied ({len(auto_fixed)})", expanded=True):
+        with st.expander(f"Auto-fixes applied ({len(auto_fixed)})"):
             for fix in auto_fixed:
                 st.markdown(f"- {fix}")
-
     if errors:
-        with st.expander(f"Errors ({len(errors)})", expanded=True):
-            for f in errors:
-                loc = f.get("file") or ""
-                cat = f.get("category") or ""
-                layer_tag = f"[{f.get('layer', '')}] " if f.get("layer") else ""
-                prefix = f"`{loc}` " if loc else ""
-                st.markdown(f"- {prefix}{layer_tag}**{cat}**: {f['message']}")
-
+        _list(errors, "Errors", True)
     if warnings:
-        with st.expander(f"Warnings ({len(warnings)})", expanded=False):
-            for f in warnings:
-                loc = f.get("file") or ""
-                cat = f.get("category") or ""
-                layer_tag = f"[{f.get('layer', '')}] " if f.get("layer") else ""
-                prefix = f"`{loc}` " if loc else ""
-                st.markdown(f"- {prefix}{layer_tag}**{cat}**: {f['message']}")
+        _list(warnings, "Warnings", False)
 
 
-st.divider()
 session_id = st.session_state.get("session_id")
 validation_errors_text = ""
-if session_id:
+
+if session_id and not _in_progress:
     try:
         final = client.get_session(session_id)
     except ApiError:
         final = {}
 
+    # Pull validation once for the self-test tab + diagnostics pre-fill.
+    try:
+        validation = client.get_validation(session_id)
+    except ApiError:
+        validation = {}
+    st_data = validation.get("self_test") if validation else None
+    if st_data:
+        for f in (st_data.get("findings") or []):
+            if f.get("severity") == "error":
+                validation_errors_text += f"- {f.get('file', '?')}: {f.get('message', '')}\n"
+
     if final.get("has_download"):
-        col_dl, col_retest = st.columns([3, 1])
-        with col_dl:
+        st.divider()
+        tab_dl, tab_preview, tab_test, tab_help = st.tabs(
+            ["⬇ Download", "👁 Preview", "✅ Self-test", "🩺 Get help"]
+        )
+
+        with tab_dl:
             try:
                 data = client.download_bytes(session_id)
                 st.download_button(
-                    "⬇ Download .pbip project (zip)",
-                    data=data,
-                    file_name=f"{project_name}.zip",
-                    mime="application/zip",
+                    "⬇ Download .pbip project (zip)", data=data,
+                    file_name=f"{project_name}.zip", mime="application/zip",
+                    type="primary", use_container_width=True,
                 )
-                # Show data-file note for CSV/Excel sources.
-                _file_types = {"csv", "excel"}
-                if any(c.get("type") in _file_types for c in connectors):
-                    st.info(
-                        "**Your data is embedded in the model.** The uploaded file is "
-                        "compressed and baked directly into the .pbip, so it opens in Power BI "
-                        "Desktop and loads immediately — no file paths to fix. (Only very large "
-                        "files are bundled alongside the .pbip instead; if Power BI can't find "
-                        "one, open **Transform Data → Data source settings** and point it at "
-                        "the file in the extracted folder.)",
-                        icon="📎",
-                    )
-                st.caption("Then continue to the **Refine** page to edit it with AI chat.")
             except ApiError as exc:
                 st.error(str(exc))
-        with col_retest:
-            if st.button(
-                "Re-test report",
-                help="Re-run the full self-test and auto-repair loop",
-                disabled=_in_progress,
-            ):
+            if any(c.get("type") in {"csv", "excel"} for c in connectors):
+                st.caption("📎 Your data is compressed and embedded in the project — it opens "
+                           "in Power BI Desktop and loads with no file paths to fix.")
+            st.caption("Next: open the **Refine** page to edit the report with AI chat.")
+            if st.button("🔄 Re-test report", disabled=_in_progress,
+                         help="Re-run the full self-test and auto-repair loop"):
                 try:
                     client.run_self_test(session_id)
                     _start_stream(session_id)
@@ -292,82 +272,59 @@ if session_id:
                 except ApiError as exc:
                     st.error(str(exc))
 
-        st.subheader("Layout preview")
-        st.caption(
-            "A wireframe of the generated pages and visuals (structure only — open the "
-            ".pbip in Power BI Desktop to see rendered visuals)."
-        )
-        try:
-            render_preview(client.get_preview(session_id))
-        except ApiError as exc:
-            st.error(str(exc))
+        with tab_preview:
+            st.caption("Wireframe of the pages and visuals (structure only).")
+            try:
+                render_preview(client.get_preview(session_id))
+            except ApiError as exc:
+                st.error(str(exc))
 
-    try:
-        validation = client.get_validation(session_id)
+        with tab_test:
+            if st_data:
+                _render_self_test(st_data)
+                with st.expander("Full validation details (JSON)"):
+                    st.json(validation)
+            else:
+                st.caption("No self-test report for this session yet.")
+    else:
+        st.divider()
+        tab_help = None
+else:
+    tab_help = None
 
-        st_data = validation.get("self_test")
-        if st_data:
-            st.subheader("Self-test report")
-            _render_self_test(st_data)
 
-        for f in (st_data.get("findings") or [] if st_data else []):
-            if f.get("severity") == "error":
-                loc = f.get("file") or "?"
-                validation_errors_text += f"- {loc}: {f.get('message', '')}\n"
+# ── Diagnostics (inside the Get help tab, or standalone when no report yet) ────
 
-        if not validation_errors_text:
-            report_val = validation.get("report") or {}
-            validation_errors_text = "\n".join(
-                f"- {e.get('file', '?')}"
-                + (f" ({e['path']})" if e.get("path") else "")
-                + f": {e.get('message', '')}"
-                for e in report_val.get("errors") or []
-            )
+def _diagnostics_body(container) -> None:
+    with container:
+        st.caption("Paste an error from Power BI Desktop, DAX, TMDL, or this tool — or attach "
+                   "a screenshot — and get an explanation plus a fix.")
+        if validation_errors_text:
+            st.caption("Pre-filled from this session's self-test errors.")
+        diag_label = st.selectbox("Model for diagnosis", list(model_labels.keys()),
+                                  key="diag_model_label")
+        error_text = st.text_area("Error message", value=validation_errors_text, height=110,
+                                  key="diag_error_text", placeholder="Paste the error here…")
+        screenshot = st.file_uploader("Or attach a screenshot", type=["png", "jpg", "jpeg"],
+                                      key="diag_image")
+        if screenshot is not None:
+            st.image(screenshot, caption=screenshot.name, width=280)
+        extra_context = st.text_input("Optional: what were you trying to do?", key="diag_context")
+        if st.button("Get help", disabled=not (error_text.strip() or screenshot)):
+            try:
+                image_b64 = base64.b64encode(screenshot.getvalue()).decode() if screenshot else None
+                image_mime = screenshot.type if screenshot else None
+                result = client.diagnose_error(
+                    model_labels[diag_label], error_text, extra_context or None,
+                    image_b64, image_mime,
+                )
+                st.markdown(result["answer"])
+            except ApiError as exc:
+                st.error(f"Could not get help: {exc}")
 
-        with st.expander("Full validation details (JSON)"):
-            st.json(validation)
-    except ApiError as exc:
-        st.error(str(exc))
 
-st.divider()
-with st.expander(
-    "Stuck on an error? Paste it here for help",
-    expanded=bool(validation_errors_text),
-):
-    st.caption(
-        "Paste an error message — from this tool's validation output, Power BI Desktop, "
-        "DAX, TMDL, or Power Query (M) — or attach a screenshot of the error dialog below."
-    )
-    if validation_errors_text:
-        st.caption("Pre-filled from this session's self-test errors — edit as needed.")
-    diag_model_label = st.selectbox(
-        "Model for diagnosis", list(model_labels.keys()), key="diag_model_label"
-    )
-    diag_model_id = model_labels[diag_model_label]
-    error_text = st.text_area(
-        "Error message",
-        value=validation_errors_text,
-        height=120,
-        key="diag_error_text",
-        placeholder="Paste the error or validation message here...",
-    )
-    screenshot = st.file_uploader(
-        "Or attach a screenshot of the error (e.g. the Power BI Desktop dialog)",
-        type=["png", "jpg", "jpeg"],
-        key="diag_image",
-    )
-    if screenshot is not None:
-        st.image(screenshot, caption=screenshot.name, width=300)
-    extra_context = st.text_input(
-        "Optional context (what were you trying to do?)", key="diag_context"
-    )
-    if st.button("Get help", disabled=not (error_text.strip() or screenshot)):
-        try:
-            image_b64 = base64.b64encode(screenshot.getvalue()).decode() if screenshot else None
-            image_mime = screenshot.type if screenshot else None
-            result = client.diagnose_error(
-                diag_model_id, error_text, extra_context or None, image_b64, image_mime
-            )
-            st.markdown(result["answer"])
-        except ApiError as exc:
-            st.error(f"Could not get help: {exc}")
+if tab_help is not None:
+    _diagnostics_body(tab_help)
+elif not _in_progress:
+    with st.expander("🩺 Stuck on an error? Get help", expanded=bool(validation_errors_text)):
+        _diagnostics_body(st.container())
