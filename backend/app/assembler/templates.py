@@ -11,16 +11,21 @@ import json
 import re
 import uuid
 
-# Base for all PBIR report-definition $schema URLs. Versions verified current (2026):
-# a non-existent version (e.g. report/4.0.0, pagesMetadata/2.0.0) makes Power BI Desktop
-# silently drop content, so each file below pins a known-published version.
+# Base for all PBIR report-definition $schema URLs. Versions pinned to a REAL, current
+# (2026) Power BI Desktop-saved report (brickfrog/powerbi-testing) that opens cleanly —
+# older versions (report/3.0.0, page/2.0.0, visualContainer/2.7.0) are rejected by a
+# current Desktop with "Failed to load the report".
 _DEF_BASE = "https://developer.microsoft.com/json-schemas/fabric/item/report/definition"
 
 VERSION_METADATA_SCHEMA = f"{_DEF_BASE}/versionMetadata/1.0.0/schema.json"
-REPORT_SCHEMA = f"{_DEF_BASE}/report/3.0.0/schema.json"
-PAGES_METADATA_SCHEMA = f"{_DEF_BASE}/pagesMetadata/1.0.0/schema.json"
-PAGE_SCHEMA = f"{_DEF_BASE}/page/2.0.0/schema.json"
-VISUAL_CONTAINER_SCHEMA = f"{_DEF_BASE}/visualContainer/2.7.0/schema.json"
+REPORT_SCHEMA = f"{_DEF_BASE}/report/3.3.0/schema.json"
+PAGES_METADATA_SCHEMA = f"{_DEF_BASE}/pagesMetadata/1.1.0/schema.json"
+PAGE_SCHEMA = f"{_DEF_BASE}/page/2.1.0/schema.json"
+VISUAL_CONTAINER_SCHEMA = f"{_DEF_BASE}/visualContainer/2.13.0/schema.json"
+# Current built-in base theme shipped with 2026 Power BI Desktop. The theme name must
+# be one the opening Desktop actually has; a stale name (e.g. the 2024 'CY24SU10') makes
+# Desktop fail to load the report.
+_BASE_THEME = "Fluent2-CY26SU09"
 
 
 def pbip_entry(project_name: str) -> str:
@@ -47,13 +52,12 @@ def platform_file(display_name: str, item_type: str) -> str:
 
 
 def definition_pbir(project_name: str) -> str:
-    # version MUST be "4.0" or higher — that is what tells Power BI the report is stored
-    # in the PBIR *definition-folder* format (pages/). With the old "1.0" value Power BI
-    # treats it as a legacy single-file report, ignores the pages/ folder entirely, and
-    # opens a blank "Page 1". definitionProperties schema is 2.0.0.
+    # version MUST be "4.0" — that tells Power BI the report is the PBIR definition-folder
+    # format (pages/). A lower value makes Desktop treat it as a legacy single-file report
+    # and open a blank "Page 1". A real Desktop-saved definition.pbir carries NO $schema
+    # (just version + datasetReference), so we match that exactly.
     return json.dumps(
         {
-            "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definitionProperties/2.0.0/schema.json",
             "version": "4.0",
             "datasetReference": {
                 "byPath": {"path": f"../{project_name}.SemanticModel"},
@@ -120,31 +124,41 @@ def default_report_json() -> dict:
 
 
 def finalize_report_json(report_json: dict | None) -> dict:
-    """Produce a report.json matching a real Power BI Desktop-saved report.
+    """Produce a report.json matching a real, current Power BI Desktop-saved report.
 
-    A real report declares the base theme with ``type: SharedResources`` AND registers it
-    in ``resourcePackages`` (referencing a theme without registering it, OR shipping no
-    report-level keys at all, both make Desktop fail to load the report). We mirror that
-    exact shape with empty defaults for the other required top-level keys, discarding any
-    unreliable model-supplied theme/resource content.
+    Mirrors brickfrog/powerbi-testing (a 2026 Desktop-saved, locally-backed report that
+    opens cleanly): base theme declared WITH type/reportVersionAtImport AND registered in
+    resourcePackages, plus the objects/settings Desktop writes. Any model-supplied theme/
+    resource content is discarded (it is unreliable and an unregistered or stale theme is
+    the classic "Failed to load the report" cause).
     """
     rj = dict(report_json or {})
     for key in ("themeCollection", "resourcePackages", "filterConfig",
                 "objects", "settings", "annotations"):
         rj.pop(key, None)
     rj["$schema"] = REPORT_SCHEMA
-    rj["themeCollection"] = {"baseTheme": {"name": "CY24SU10", "type": "SharedResources"}}
+    rj["themeCollection"] = {
+        "baseTheme": {
+            "name": _BASE_THEME,
+            "reportVersionAtImport": {"visual": "2.13.0", "report": "3.4.0", "page": "2.3.1"},
+            "type": "SharedResources",
+        }
+    }
     rj["resourcePackages"] = [
         {
             "name": "SharedResources",
             "type": "SharedResources",
-            "items": [{"name": "CY24SU10", "path": "BaseThemes/CY24SU10.json", "type": "BaseTheme"}],
+            "items": [
+                {"name": _BASE_THEME, "path": f"BaseThemes/{_BASE_THEME}.json", "type": "BaseTheme"}
+            ],
         }
     ]
-    rj["filterConfig"] = {"filters": []}
-    rj["objects"] = {}
-    rj["settings"] = {}
-    rj["annotations"] = []
+    rj["settings"] = {
+        "useStylableVisualContainerHeader": True,
+        "defaultDrillFilterOtherVisuals": True,
+        "allowChangeFilterTypes": True,
+        "useEnhancedTooltips": True,
+    }
     return rj
 
 
@@ -168,7 +182,7 @@ def finalize_page_json(
     pj.setdefault("displayOption", "FitToPage")
     pj.setdefault("width", 1280)
     pj.setdefault("height", 720)
-    pj.setdefault("ordinal", ordinal)
+    pj.pop("ordinal", None)  # real Desktop page.json has no 'ordinal' (order is in pages.json)
     return pj
 
 

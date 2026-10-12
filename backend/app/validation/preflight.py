@@ -368,7 +368,8 @@ def _check_schema(path: Path) -> list[PreflightFinding]:
                 file=path.name,
             )
         ]
-    if expected not in schema:
+    # A missing $schema is fine — a real Desktop-saved definition.pbir omits it entirely.
+    if schema and expected not in schema:
         return [
             PreflightFinding(
                 category="structure.schema",

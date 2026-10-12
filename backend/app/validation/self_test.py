@@ -46,7 +46,7 @@ ProgressCb = Callable[[dict], Awaitable[None]]
 _PROMPTS = Path(__file__).parent.parent / "generation" / "prompts"
 _VISUAL_CONTAINER_SCHEMA = (
     "https://developer.microsoft.com/json-schemas/fabric/item/report/"
-    "definition/visualContainer/2.7.0/schema.json"
+    "definition/visualContainer/2.13.0/schema.json"
 )
 
 
