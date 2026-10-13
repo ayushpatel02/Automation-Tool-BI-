@@ -1,0 +1,39 @@
+# Registry of selectable generation models. Adding a model is configuration, not code.
+# `id` is a LiteLLM-format "provider/model" string.
+#
+# Model IDs move as providers retire old versions (a retired model returns 404
+# "no longer available"). Verified current as of 2026-10:
+#   - Gemini 2.5 Flash/Pro were retired for new API users; use the Gemini 3.x line.
+#   - Claude Opus 4.8 superseded by the Claude 5 family.
+# When a model 404s, update the id here — no code change needed.
+models:
+  - id: gemini/gemini-3.5-flash
+    display_name: "Gemini 3.5 Flash"
+    provider: google
+    env_key: GEMINI_API_KEY
+    supports_structured_output: true
+    recommended: true
+
+  - id: gemini/gemini-3.1-pro-preview
+    display_name: "Gemini 3.1 Pro"
+    provider: google
+    env_key: GEMINI_API_KEY
+    supports_structured_output: true
+
+  - id: anthropic/claude-sonnet-5-5
+    display_name: "Claude Sonnet 5.5"
+    provider: anthropic
+    env_key: ANTHROPIC_API_KEY
+    supports_structured_output: true
+
+  - id: anthropic/claude-opus-5-5
+    display_name: "Claude Opus 5.5"
+    provider: anthropic
+    env_key: ANTHROPIC_API_KEY
+    supports_structured_output: true
+
+  - id: openai/gpt-4o
+    display_name: "GPT-4o"
+    provider: openai
+    env_key: OPENAI_API_KEY
+    supports_structured_output: true

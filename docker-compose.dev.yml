@@ -1,0 +1,32 @@
+# Development stack: SQLite-backed backend with reload + Streamlit, no Caddy/Postgres.
+services:
+  backend:
+    build: ./backend
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    environment:
+      DATABASE_URL: sqlite+aiosqlite:////data/app.db
+      JWT_SECRET: dev-secret-not-for-production
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-dGVzdC1rZXktMzItYnl0ZXMtZm9yLWZlcm5ldC1vayE=}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      FRONTEND_ORIGIN: http://localhost:8501
+      GENERATED_DIR: /data/generated
+    volumes:
+      - ./backend/app:/app/app
+      - devdata:/data
+    ports:
+      - "8000:8000"
+
+  frontend:
+    build: ./frontend
+    command: streamlit run app.py --server.address=0.0.0.0 --server.port=8501
+    environment:
+      BACKEND_URL: http://backend:8000
+    volumes:
+      - ./frontend:/app
+    depends_on:
+      - backend
+    ports:
+      - "8501:8501"
+
+volumes:
+  devdata:
