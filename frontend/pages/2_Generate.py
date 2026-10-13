@@ -35,8 +35,32 @@ model_labels = {
 }
 
 # ── Inputs ────────────────────────────────────────────────────────────────────
-source_names = ", ".join(f"**{c['name']}**" for c in connectors)
-st.caption(f"Using data from: {source_names}")
+# Pick which connected/uploaded sources to use for THIS report. Default to all; the
+# user can combine several or filter out the ones they don't need.
+_by_id = {c["credential_id"]: c for c in connectors}
+
+
+def _src_label(cid: str) -> str:
+    c = _by_id.get(cid, {})
+    return f"{c.get('name', '?')}  ·  {c.get('type', '')}"
+
+
+if len(connectors) == 1:
+    selected_conns = connectors
+    st.caption(f"Using data from: **{connectors[0]['name']}**")
+else:
+    _ids = [c["credential_id"] for c in connectors]
+    selected_ids = st.multiselect(
+        "Data sources to include",
+        options=_ids,
+        default=_ids,
+        format_func=_src_label,
+        help="Pick which connected/uploaded sources this report should use. Combine "
+        "several, or remove the ones you don't need — unselected sources are left out.",
+    )
+    selected_conns = [_by_id[i] for i in selected_ids]
+    if not selected_conns:
+        st.warning("Select at least one data source to generate a report.", icon="⚠️")
 
 request = st.text_area(
     "Describe the report you want",
@@ -166,13 +190,14 @@ elif st.session_state.get("_gen_cancelled"):
 # ── Generate button ───────────────────────────────────────────────────────────
 _show_generate = not _in_progress and not st.session_state.get("_gen_cancelled")
 if _show_generate and st.button(
-    "✨ Generate report", type="primary", disabled=not request.strip(),
+    "✨ Generate report", type="primary",
+    disabled=not request.strip() or not selected_conns,
     use_container_width=True,
 ):
     body = {
         "model_id": model_id,
         "request": request,
-        "credential_ids": [c["credential_id"] for c in connectors if c.get("credential_id")],
+        "credential_ids": [c["credential_id"] for c in selected_conns if c.get("credential_id")],
         "project_name": project_name,
     }
     try:
@@ -260,7 +285,7 @@ if session_id and not _in_progress:
                 )
             except ApiError as exc:
                 st.error(str(exc))
-            if any(c.get("type") in {"csv", "excel"} for c in connectors):
+            if any(c.get("type") in {"csv", "excel"} for c in selected_conns):
                 st.caption("📎 Your data is compressed and embedded in the project — it opens "
                            "in Power BI Desktop and loads with no file paths to fix.")
             st.caption("Next: open the **Refine** page to edit the report with AI chat.")
